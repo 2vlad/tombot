@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python bot.py"
+numReplicas = 1
+
+[volumes]
+source = "/data"
+destination = "/app/data"

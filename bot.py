@@ -105,6 +105,17 @@ def setup_database():
     )
     ''')
     
+    # Create buttons table to store button texts and messages
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS buttons (
+        id INTEGER PRIMARY KEY,
+        button_number INTEGER,
+        button_text TEXT,
+        message_text TEXT,
+        last_updated TEXT
+    )
+    ''')
+    
     # Insert default admin if not exists
     # Replace ADMIN_ID with the actual Telegram ID of the admin
     admin_id = os.environ.get('ADMIN_ID', None)
@@ -142,6 +153,69 @@ def is_admin(user_id):
     result = cursor.fetchone()
     conn.close()
     return result and result[0] == 1
+
+# Functions for working with button settings in the database
+def load_buttons_from_db():
+    global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS
+    
+    conn = sqlite3.connect('filmschool.db')
+    cursor = conn.cursor()
+    
+    # Check if there are any saved buttons in the database
+    cursor.execute("SELECT COUNT(*) FROM buttons")
+    count = cursor.fetchone()[0]
+    
+    if count > 0:
+        # Load button 1 (latest lesson)
+        cursor.execute("SELECT button_text, message_text FROM buttons WHERE button_number = 1")
+        button1_data = cursor.fetchone()
+        if button1_data:
+            BUTTON_LATEST_LESSON = button1_data[0]
+            MSG_LATEST_LESSON = button1_data[1]
+            BUTTONS[1]['text'] = BUTTON_LATEST_LESSON
+            BUTTONS[1]['message'] = MSG_LATEST_LESSON
+        
+        # Load button 2 (previous lesson)
+        cursor.execute("SELECT button_text, message_text FROM buttons WHERE button_number = 2")
+        button2_data = cursor.fetchone()
+        if button2_data:
+            BUTTON_PREVIOUS_LESSON = button2_data[0]
+            MSG_PREVIOUS_LESSON = button2_data[1]
+            BUTTONS[2]['text'] = BUTTON_PREVIOUS_LESSON
+            BUTTONS[2]['message'] = MSG_PREVIOUS_LESSON
+    else:
+        # If no buttons in database, initialize with default values
+        save_button_to_db(1, BUTTON_LATEST_LESSON, MSG_LATEST_LESSON)
+        save_button_to_db(2, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON)
+    
+    conn.close()
+
+def save_button_to_db(button_number, button_text, message_text):
+    conn = sqlite3.connect('filmschool.db')
+    cursor = conn.cursor()
+    
+    # Current timestamp
+    now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Check if button already exists
+    cursor.execute("SELECT id FROM buttons WHERE button_number = ?", (button_number,))
+    button_id = cursor.fetchone()
+    
+    if button_id:
+        # Update existing button
+        cursor.execute(
+            "UPDATE buttons SET button_text = ?, message_text = ?, last_updated = ? WHERE button_number = ?", 
+            (button_text, message_text, now, button_number)
+        )
+    else:
+        # Insert new button
+        cursor.execute(
+            "INSERT INTO buttons (button_number, button_text, message_text, last_updated) VALUES (?, ?, ?, ?)", 
+            (button_number, button_text, message_text, now)
+        )
+    
+    conn.commit()
+    conn.close()
 
 # Log user actions with detailed information
 def log_action(user_id, action, action_data=None):
@@ -551,6 +625,9 @@ def update_button(update: Update, context: CallbackContext) -> None:
         
         # Обновляем словарь кнопок
         BUTTONS[button_num] = {'text': button_text, 'message': message_text}
+        
+        # Сохраняем изменения в базе данных
+        save_button_to_db(button_num, button_text, message_text)
         
         # Формируем сообщение об успехе
         success_message = f'Кнопка {button_num} обновлена.'
@@ -1092,6 +1169,9 @@ def make_admin(update: Update, context: CallbackContext) -> None:
 def main() -> None:
     # Setup database
     setup_database()
+    
+    # Load button settings from database
+    load_buttons_from_db()
     
     # Get token from environment variable
     token = os.environ.get('TELEGRAM_TOKEN')

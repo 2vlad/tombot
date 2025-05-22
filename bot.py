@@ -624,7 +624,7 @@ def update_button(update: Update, context: CallbackContext) -> None:
         save_button_to_db(button_num, button_text, message_text)
         
         # Формируем сообщение об успехе
-        success_message = f'Кнопка {button_num} обновлена.'
+        success_message = 'Готово. Нажми «Обновить».'
         
         update.message.reply_text(success_message)
         log_action(user_id, 'update_button', f'button_num:{button_num}, text:"{button_text}", url:{button_url}')

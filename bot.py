@@ -150,10 +150,30 @@ def is_admin(user_id):
     conn.close()
     return result and result[0] == 1
 
-# Functions for working with button settings in the database
+# Functions for working with button settings in the database and environment variables
 def load_buttons_from_db():
     global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS
     
+    # First, check environment variables
+    button1_text = os.environ.get('BUTTON1_TEXT')
+    button1_message = os.environ.get('BUTTON1_MESSAGE')
+    button2_text = os.environ.get('BUTTON2_TEXT')
+    button2_message = os.environ.get('BUTTON2_MESSAGE')
+    
+    # If environment variables are set, use them
+    if button1_text and button1_message:
+        BUTTON_LATEST_LESSON = button1_text
+        MSG_LATEST_LESSON = button1_message
+        BUTTONS[1]['text'] = BUTTON_LATEST_LESSON
+        BUTTONS[1]['message'] = MSG_LATEST_LESSON
+    
+    if button2_text and button2_message:
+        BUTTON_PREVIOUS_LESSON = button2_text
+        MSG_PREVIOUS_LESSON = button2_message
+        BUTTONS[2]['text'] = BUTTON_PREVIOUS_LESSON
+        BUTTONS[2]['message'] = MSG_PREVIOUS_LESSON
+    
+    # Then check the database
     conn = sqlite3.connect('filmschool.db')
     cursor = conn.cursor()
     
@@ -212,6 +232,41 @@ def save_button_to_db(button_number, button_text, message_text):
     
     conn.commit()
     conn.close()
+    
+    # Также сохраняем настройки в переменные окружения для Railway
+    try:
+        # Для Railway мы не можем напрямую установить переменные окружения из кода
+        # Но мы можем записать их в файл .env, который можно использовать при локальной разработке
+        # и сообщить администратору, что нужно добавить эти переменные в Railway
+        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+        
+        # Создаем или обновляем файл .env
+        with open(env_file, 'a+') as f:
+            f.seek(0)  # Перемещаемся в начало файла для чтения
+            lines = f.readlines()
+            
+            # Создаем словарь существующих переменных
+            env_vars = {}
+            for line in lines:
+                if '=' in line:
+                    key, value = line.strip().split('=', 1)
+                    env_vars[key] = value
+            
+            # Обновляем переменные для кнопок
+            if button_number == 1:
+                env_vars['BUTTON1_TEXT'] = f'"{button_text}"'
+                env_vars['BUTTON1_MESSAGE'] = f'"{message_text}"'
+            elif button_number == 2:
+                env_vars['BUTTON2_TEXT'] = f'"{button_text}"'
+                env_vars['BUTTON2_MESSAGE'] = f'"{message_text}"'
+            
+            # Перезаписываем файл с обновленными переменными
+            f.seek(0)
+            f.truncate()
+            for key, value in env_vars.items():
+                f.write(f"{key}={value}\n")
+    except Exception as e:
+        logger.error(f"Error saving environment variables: {e}")
 
 # Log user actions with detailed information
 def log_action(user_id, action, action_data=None):

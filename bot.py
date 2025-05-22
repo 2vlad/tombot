@@ -31,6 +31,12 @@ https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=dri
 
 Запись доступна в течение 7 дней.'''
 
+# Словарь для хранения кнопок и сообщений
+BUTTONS = {
+    1: {'text': BUTTON_LATEST_LESSON, 'message': MSG_LATEST_LESSON},
+    2: {'text': BUTTON_PREVIOUS_LESSON, 'message': MSG_PREVIOUS_LESSON}
+}
+
 # Общие тексты сообщений
 MSG_WELCOME = 'Привет, я бот для занятий по авангардному кино. Чтобы получить запись прошедшего занятия, нажми кнопку. Записи хранятся 7 дней.'
 MSG_ACCOUNT_ACTIVATED = 'Аккаунт активирован. Используй кнопки для доступа к записям занятий.'
@@ -201,7 +207,7 @@ def start(update: Update, context: CallbackContext) -> None:
             return
     
     # Стандартная проверка авторизации
-    if is_user_authorized(user_id, username):
+    if is_user_authorized(user_id, username) or is_admin(user_id):
         # Обновляем информацию о пользователе
         cursor.execute(
             "UPDATE users SET username = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
@@ -214,8 +220,17 @@ def start(update: Update, context: CallbackContext) -> None:
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
+        # Проверяем, является ли пользователь администратором
+        welcome_message = MSG_WELCOME.format(first_name)
+        
+        # Добавляем информацию о правах администратора, если пользователь является администратором
+        if is_admin(user_id):
+            welcome_message += '''
+
+Вы имеете права администратора. Используйте /help для просмотра доступных команд.'''
+        
         update.message.reply_text(
-            MSG_WELCOME.format(first_name),
+            welcome_message,
             reply_markup=reply_markup
         )
         log_action(user_id, 'start', 'regular_start')
@@ -258,7 +273,10 @@ def help_command(update: Update, context: CallbackContext) -> None:
                 '/removeuser <user_id или @username> - Удалить пользователя\n'
                 '/listusers - Показать список всех пользователей\n'
                 '/pendingusers - Показать список пользователей, запросивших доступ\n'
+                '/makeadmin <user_id или @username> - Назначить пользователя администратором\n'
                 '/updatevideo <номер> <название> <ссылка> - Обновить ссылку на видео (1 - последнее, 2 - предыдущее)\n'
+                '/button1 "<текст кнопки>" "<ссылка>" - Обновить первую кнопку\n'
+                '/button2 "<текст кнопки>" "<ссылка>" - Обновить вторую кнопку\n'
                 '/stats - Показать статистику использования бота'
             )
         
@@ -443,6 +461,96 @@ def remove_user(update: Update, context: CallbackContext) -> None:
         update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
         conn.close()
 
+def update_button(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Проверяем, что переданы все необходимые аргументы
+    if len(context.args) < 3:
+        update.message.reply_text(
+            '''Пожалуйста, укажите все необходимые параметры: 
+
+/button<номер> "<текст кнопки>" "<ссылка>"
+
+Например: /button1 "Запись занятия 19 мая" "https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT84cYb?usp=drivelink"'''
+        )
+        return
+    
+    try:
+        # Извлекаем номер кнопки из команды (например, /button1 -> 1)
+        command = update.message.text.split()[0]  # Получаем /button1
+        button_num = int(command.replace('/button', ''))
+        
+        if button_num not in [1, 2]:
+            raise ValueError("Номер кнопки должен быть 1 (последнее занятие) или 2 (предыдущее занятие)")
+        
+        # Получаем текст кнопки и ссылку
+        # Аргументы могут содержать пробелы и быть в кавычках, поэтому используем полный текст сообщения
+        full_text = update.message.text
+        
+        # Находим текст в кавычках
+        import re
+        matches = re.findall(r'"([^"]*)"', full_text)
+        
+        if len(matches) < 2:
+            raise ValueError("Пожалуйста, укажите текст кнопки и ссылку в кавычках")
+        
+        button_text = matches[0]
+        button_url = matches[1]
+        
+        # Создаем новый текст сообщения с указанной ссылкой
+        message_text = f'''Запись занятия:
+
+{button_url}
+
+Запись доступна в течение 7 дней.'''
+        
+        # Обновляем глобальные переменные в зависимости от номера кнопки
+        global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS
+        
+        if button_num == 1:
+            BUTTON_LATEST_LESSON = button_text
+            MSG_LATEST_LESSON = message_text
+        else:  # button_num == 2
+            BUTTON_PREVIOUS_LESSON = button_text
+            MSG_PREVIOUS_LESSON = message_text
+        
+        # Обновляем словарь кнопок
+        BUTTONS[button_num] = {'text': button_text, 'message': message_text}
+        
+        # Формируем расширенное сообщение об успехе
+        success_message = f'''✅ Кнопка {button_num} успешно обновлена!
+
+📝 Новый текст кнопки: "{button_text}"
+
+🔗 Новая ссылка: {button_url}
+
+Изменения вступили в силу немедленно. Все пользователи увидят новый текст кнопки и получат новую ссылку при нажатии.'''
+        
+        update.message.reply_text(success_message)
+        log_action(user_id, 'update_button', f'button_num:{button_num}, text:"{button_text}", url:{button_url}')
+        
+    except ValueError as e:
+        # Формируем понятное сообщение об ошибке
+        error_message = f'''❌ Ошибка при обновлении кнопки:
+
+{str(e)}
+
+Пожалуйста, проверьте формат команды:
+/button<номер> "<текст кнопки>" "<ссылка>"'''
+        update.message.reply_text(error_message)
+    except Exception as e:
+        # Формируем детальное сообщение о неожиданной ошибке
+        unexpected_error = f'''⚠️ Неожиданная ошибка при обновлении кнопки:
+
+{str(e)}
+
+Пожалуйста, свяжитесь с администратором или попробуйте еще раз.'''
+        update.message.reply_text(unexpected_error)
+
 def update_video(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -478,7 +586,7 @@ def update_video(update: Update, context: CallbackContext) -> None:
             # Less than 2 videos in database, add new ones
             for i in range(2 - len(videos)):
                 cursor.execute("INSERT INTO videos (title, url, upload_date) VALUES (?, ?, ?)", 
-                              ("Новое занятие", "https://example.com", now))
+                               ("Новое занятие", "https://example.com", now))
         
         # Get videos again after possible insertion
         cursor.execute("SELECT id FROM videos ORDER BY upload_date DESC LIMIT 2")
@@ -487,7 +595,7 @@ def update_video(update: Update, context: CallbackContext) -> None:
         # Update the selected video
         video_id = videos[video_num - 1][0]
         cursor.execute("UPDATE videos SET title = ?, url = ?, upload_date = ? WHERE id = ?", 
-                      (title, url, now, video_id))
+                       (title, url, now, video_id))
         
         conn.commit()
         conn.close()
@@ -750,22 +858,24 @@ def handle_message(update: Update, context: CallbackContext) -> None:
     user_id = user.id
     username = user.username
     
-    if not is_user_authorized(user_id, username):
+    # Разрешаем доступ к кнопкам как авторизованным пользователям, так и администраторам
+    if not (is_user_authorized(user_id, username) or is_admin(user_id)):
         update.message.reply_text(MSG_NOT_AUTHORIZED)
         return
     
     text = update.message.text
     
-    if text == BUTTON_LATEST_LESSON:
+    # Используем словарь BUTTONS для обработки нажатий на кнопки
+    if text == BUTTONS[1]['text']:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(MSG_LATEST_LESSON, parse_mode=ParseMode.MARKDOWN)
+        update.message.reply_text(BUTTONS[1]['message'], parse_mode=ParseMode.MARKDOWN)
         # Расширенное логирование с данными о кнопке
-        log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
-    elif text == BUTTON_PREVIOUS_LESSON:
+        log_action(user_id, 'get_latest_video', BUTTONS[1]['text'])
+    elif text == BUTTONS[2]['text']:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(MSG_PREVIOUS_LESSON, parse_mode=ParseMode.MARKDOWN)
+        update.message.reply_text(BUTTONS[2]['message'], parse_mode=ParseMode.MARKDOWN)
         # Расширенное логирование с данными о кнопке
-        log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
+        log_action(user_id, 'get_previous_video', BUTTONS[2]['text'])
     else:
         update.message.reply_text(
             'Пожалуйста, используйте кнопки для доступа к записям занятий.'
@@ -859,6 +969,86 @@ def pending_users(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'pending_users', 'admin_command')
 
+def make_admin(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    # Проверяем, что команду выполняет администратор
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Проверяем, что указан пользователь для повышения до администратора
+    if not context.args:
+        update.message.reply_text('Пожалуйста, укажите Telegram ID или @username пользователя, которого вы хотите сделать администратором.')
+        return
+    
+    user_identifier = context.args[0]
+    conn = sqlite3.connect('filmschool.db')
+    cursor = conn.cursor()
+    
+    # Определяем, является ли идентификатор числом (ID) или именем пользователя
+    if user_identifier.isdigit():
+        # Если это ID
+        target_user_id = int(user_identifier)
+        
+        # Проверяем, существует ли пользователь с таким ID
+        cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = ?", (target_user_id,))
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f'Пользователь с ID {target_user_id} не найден.')
+            conn.close()
+            return
+            
+        user_id, username, is_admin_flag = user_data
+        
+        # Проверяем, не является ли пользователь уже администратором
+        if is_admin_flag == 1:
+            update.message.reply_text(f'Пользователь с ID {target_user_id} уже является администратором.')
+            conn.close()
+            return
+        
+        # Делаем пользователя администратором
+        cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        conn.commit()
+        
+        username_str = f'@{username}' if username else ''
+        update.message.reply_text(f'Пользователь {username_str} (ID: {target_user_id}) успешно назначен администратором.')
+        log_action(user_id, 'make_admin', f'target_user_id:{target_user_id}')
+        
+    elif user_identifier.startswith('@'):
+        # Если это @username
+        username = user_identifier[1:]  # Убираем символ @
+        
+        # Проверяем, существует ли пользователь с таким username
+        cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f'Пользователь @{username} не найден.')
+            conn.close()
+            return
+            
+        target_user_id, is_admin_flag = user_data
+        
+        # Проверяем, не является ли пользователь уже администратором
+        if is_admin_flag == 1:
+            update.message.reply_text(f'Пользователь @{username} уже является администратором.')
+            conn.close()
+            return
+        
+        # Делаем пользователя администратором
+        cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        conn.commit()
+        
+        update.message.reply_text(f'Пользователь @{username} (ID: {target_user_id}) успешно назначен администратором.')
+        log_action(user_id, 'make_admin', f'target_username:@{username}')
+        
+    else:
+        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
+    
+    conn.close()
+
 def main() -> None:
     # Setup database
     setup_database()
@@ -885,6 +1075,11 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("actions", show_actions))
     dispatcher.add_handler(CommandHandler("listusers", list_users))
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
+    dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
+    
+    # Register button update command handlers
+    dispatcher.add_handler(CommandHandler("button1", update_button))
+    dispatcher.add_handler(CommandHandler("button2", update_button))
     
     # Register message handler
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))

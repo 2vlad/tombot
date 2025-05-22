@@ -31,10 +31,14 @@ https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=dri
 
 Запись доступна в течение 7 дней.'''
 
+# Третья кнопка (обновление клавиатуры)
+BUTTON_REFRESH = 'Обновить'
+
 # Словарь для хранения кнопок и сообщений
 BUTTONS = {
     1: {'text': BUTTON_LATEST_LESSON, 'message': MSG_LATEST_LESSON},
-    2: {'text': BUTTON_PREVIOUS_LESSON, 'message': MSG_PREVIOUS_LESSON}
+    2: {'text': BUTTON_PREVIOUS_LESSON, 'message': MSG_PREVIOUS_LESSON},
+    3: {'text': BUTTON_REFRESH, 'message': ''}
 }
 
 # Общие тексты сообщений
@@ -216,7 +220,8 @@ def start(update: Update, context: CallbackContext) -> None:
         conn.commit()
         
         keyboard = [
-            [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON]
+            [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON],
+            [BUTTON_REFRESH]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
@@ -265,16 +270,20 @@ def refresh_keyboard(update: Update, context: CallbackContext) -> None:
     
     # Создаем клавиатуру с актуальными кнопками
     keyboard = [
-        [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON]
+        [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON],
+        [BUTTON_REFRESH]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
     # Отправляем сообщение с обновленной клавиатурой
     update.message.reply_text(
-        'Клавиатура обновлена! Теперь вы видите актуальные кнопки:
+        f'''✅ Клавиатура успешно обновлена!
 
-Кнопка 1: "{BUTTON_LATEST_LESSON}"
-Кнопка 2: "{BUTTON_PREVIOUS_LESSON}"',
+Теперь вы видите актуальные кнопки:
+
+🔹 "{BUTTON_LATEST_LESSON}"
+🔹 "{BUTTON_PREVIOUS_LESSON}"
+🔹 "{BUTTON_REFRESH}" - для обновления кнопок после их изменения администратором''',
         reply_markup=reply_markup
     )
     
@@ -558,7 +567,7 @@ def update_button(update: Update, context: CallbackContext) -> None:
 
 Изменения вступили в силу немедленно. Все пользователи увидят новый текст кнопки и получат новую ссылку при нажатии.
 
-ℹ️ Важно: Пользователям необходимо использовать команду /refresh для обновления клавиатуры, иначе они будут видеть старый текст кнопок.'''
+ℹ️ Важно: Пользователям необходимо нажать кнопку "Обновить" для обновления клавиатуры, иначе они будут видеть старый текст кнопок.'''
         
         update.message.reply_text(success_message)
         log_action(user_id, 'update_button', f'button_num:{button_num}, text:"{button_text}", url:{button_url}')
@@ -906,6 +915,10 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         update.message.reply_text(BUTTONS[2]['message'], parse_mode=ParseMode.MARKDOWN)
         # Расширенное логирование с данными о кнопке
         log_action(user_id, 'get_previous_video', BUTTONS[2]['text'])
+    elif text == BUTTONS[3]['text']:
+        # Если нажата кнопка "Обновить", вызываем функцию refresh_keyboard
+        refresh_keyboard(update, context)
+        log_action(user_id, 'refresh_keyboard_button', 'button_click')
     else:
         update.message.reply_text(
             'Пожалуйста, используйте кнопки для доступа к записям занятий.'

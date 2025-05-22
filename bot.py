@@ -1056,7 +1056,13 @@ def make_admin(update: Update, context: CallbackContext) -> None:
         conn.commit()
         
         username_str = f'@{username}' if username else ''
-        update.message.reply_text(f'Пользователь {username_str} (ID: {target_user_id}) успешно назначен администратором.')
+        
+        # Создаем сообщение о назначении администратором
+        admin_message = f'''✅ Пользователь {username_str} (ID: {target_user_id}) успешно назначен администратором.
+
+ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
+        
+        update.message.reply_text(admin_message)
         log_action(user_id, 'make_admin', f'target_user_id:{target_user_id}')
         
     elif user_identifier.startswith('@'):
@@ -1084,7 +1090,12 @@ def make_admin(update: Update, context: CallbackContext) -> None:
         cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
         conn.commit()
         
-        update.message.reply_text(f'Пользователь @{username} (ID: {target_user_id}) успешно назначен администратором.')
+        # Создаем сообщение о назначении администратором
+        admin_message = f'''✅ Пользователь @{username} (ID: {target_user_id}) успешно назначен администратором.
+
+ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
+        
+        update.message.reply_text(admin_message)
         log_action(user_id, 'make_admin', f'target_username:@{username}')
         
     else:

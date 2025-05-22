@@ -17,17 +17,13 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 
 # Первая кнопка (последнее занятие)
 BUTTON_LATEST_LESSON = 'Запись занятия 18 мая'
-MSG_LATEST_LESSON = '''Запись занятия от 18 мая:
-
-https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
+MSG_LATEST_LESSON = '''Запись занятия: https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
 
 Запись доступна в течение 7 дней.'''
 
 # Вторая кнопка (предыдущее занятие)
 BUTTON_PREVIOUS_LESSON = 'Запись занятия 22 мая'
-MSG_PREVIOUS_LESSON = '''Запись занятия от 22 мая:
-
-https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
+MSG_PREVIOUS_LESSON = '''Запись занятия: https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
 
 Запись доступна в течение 7 дней.'''
 
@@ -607,9 +603,7 @@ def update_button(update: Update, context: CallbackContext) -> None:
         button_url = matches[1]
         
         # Создаем новый текст сообщения с указанной ссылкой
-        message_text = f'''Запись занятия:
-
-{button_url}
+        message_text = f'''Запись занятия: {button_url}
 
 Запись доступна в течение 7 дней.'''
         

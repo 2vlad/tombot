@@ -253,16 +253,44 @@ def start(update: Update, context: CallbackContext) -> None:
             'Пожалуйста, обратитесь к администратору киношколы для регистрации.'
         )
 
+def refresh_keyboard(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = user.id
+    username = user.username
+    
+    # Проверяем, что пользователь авторизован
+    if not (is_user_authorized(user_id, username) or is_admin(user_id)):
+        update.message.reply_text(MSG_NOT_AUTHORIZED)
+        return
+    
+    # Создаем клавиатуру с актуальными кнопками
+    keyboard = [
+        [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    # Отправляем сообщение с обновленной клавиатурой
+    update.message.reply_text(
+        'Клавиатура обновлена! Теперь вы видите актуальные кнопки:
+
+Кнопка 1: "{BUTTON_LATEST_LESSON}"
+Кнопка 2: "{BUTTON_PREVIOUS_LESSON}"',
+        reply_markup=reply_markup
+    )
+    
+    log_action(user_id, 'refresh_keyboard', 'keyboard_updated')
+
 def help_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = user.id
     username = user.username
     
-    if is_user_authorized(user_id, username):
+    if is_user_authorized(user_id, username) or is_admin(user_id):
         help_text = (
             'Доступные команды:\n'
             '/start - Начать работу с ботом\n'
-            '/help - Показать это сообщение\n\n'
+            '/help - Показать это сообщение\n'
+            '/refresh - Обновить кнопки\n\n'
             'Используйте кнопки для доступа к записям занятий.'
         )
         
@@ -528,7 +556,9 @@ def update_button(update: Update, context: CallbackContext) -> None:
 
 🔗 Новая ссылка: {button_url}
 
-Изменения вступили в силу немедленно. Все пользователи увидят новый текст кнопки и получат новую ссылку при нажатии.'''
+Изменения вступили в силу немедленно. Все пользователи увидят новый текст кнопки и получат новую ссылку при нажатии.
+
+ℹ️ Важно: Пользователям необходимо использовать команду /refresh для обновления клавиатуры, иначе они будут видеть старый текст кнопок.'''
         
         update.message.reply_text(success_message)
         log_action(user_id, 'update_button', f'button_num:{button_num}, text:"{button_text}", url:{button_url}')
@@ -1068,6 +1098,7 @@ def main() -> None:
     # Register command handlers
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("refresh", refresh_keyboard))
     dispatcher.add_handler(CommandHandler("adduser", add_user))
     dispatcher.add_handler(CommandHandler("removeuser", remove_user))
     dispatcher.add_handler(CommandHandler("updatevideo", update_video))

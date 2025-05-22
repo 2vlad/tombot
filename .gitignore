@@ -28,3 +28,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Files with private keys
+README.md
+run_bot.sh
+run_fixed.sh

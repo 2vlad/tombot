@@ -555,10 +555,10 @@ def add_users(update: Update, context: CallbackContext) -> None:
     
     # Проверяем, что есть текст после команды
     if not context.args and not update.message.text.split(' ', 1)[1:]:
-        update.message.reply_text('Пожалуйста, укажите список никнеймов пользователей для добавления.
+        update.message.reply_text('''Пожалуйста, укажите список никнеймов пользователей для добавления.
 
 Пример: `/addusers @user1 @user2 @user3`
-Или отправьте список никнеймов, каждый в новой строке.')
+Или отправьте список никнеймов, каждый в новой строке.''', parse_mode=ParseMode.MARKDOWN)
         return
     
     # Получаем текст после команды
@@ -585,7 +585,7 @@ def add_users(update: Update, context: CallbackContext) -> None:
         return
     
     # Подключаемся к базе данных
-    conn = sqlite3.connect('filmschool.db')
+    conn = sqlite3.connect(get_db_path())
     cursor = conn.cursor()
     
     # Статистика добавления

@@ -632,19 +632,15 @@ def add_users(update: Update, context: CallbackContext) -> None:
     conn.close()
     
     # Формируем отчет
-    report = f'Добавлено пользователей: {added_count}
-'
-    report += f'Уже существуют: {already_exists_count}
-'
+    report = f"Добавлено пользователей: {added_count}"
+    report += f"\nУже существуют: {already_exists_count}"
     
     if not_found_count > 0:
-        report += f'
-Не найдено в списке ожидающих: {not_found_count}
-'
+        report += f"\n\nНе найдено в списке ожидающих: {not_found_count}"
         if not_found_usernames:
-            report += 'Не найдены: ' + ', '.join([f'@{username}' for username in not_found_usernames[:10]])
+            report += "\nНе найдены: " + ", ".join([f"@{username}" for username in not_found_usernames[:10]])
             if len(not_found_usernames) > 10:
-                report += f' и еще {len(not_found_usernames) - 10}'
+                report += f" и еще {len(not_found_usernames) - 10}"
     
     update.message.reply_text(report)
 

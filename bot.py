@@ -424,16 +424,16 @@ def help_command(update: Update, context: CallbackContext) -> None:
         
         if is_admin(user_id):
             help_text += (
-                '\n\nКоманды администратора:\n'
-                '/adduser <user_id или @username> - Добавить нового пользователя\n'
-                '/removeuser <user_id или @username> - Удалить пользователя\n'
-                '/listusers - Показать список всех пользователей\n'
-                '/pendingusers - Показать список пользователей, запросивших доступ\n'
+                '*Команды администратора:*\n'
+                '/adduser <user_id> - Добавить пользователя по ID\n'
+                '/addusers @user1 @user2 ... - Массовое добавление пользователей по никнеймам\n'
+                '/removeuser <user_id> - Удалить пользователя по ID\n'
                 '/makeadmin <user_id или @username> - Назначить пользователя администратором\n'
-                '/updatevideo <номер> <название> <ссылка> - Обновить ссылку на видео (1 - последнее, 2 - предыдущее)\n'
-                '/button1 "<текст кнопки>" "<ссылка>" - Обновить первую кнопку\n'
-                '/button2 "<текст кнопки>" "<ссылка>" - Обновить вторую кнопку\n'
-                '/stats - Показать статистику использования бота'
+                '/button1 "Текст кнопки" "URL" - Обновить текст и ссылку для кнопки 1\n'
+                '/button2 "Текст кнопки" "URL" - Обновить текст и ссылку для кнопки 2\n'
+                '/stats - Показать статистику использования бота\n'
+                '/users - Показать список пользователей\n'
+                '/pending - Показать список ожидающих подтверждения пользователей\n'
             )
         
         update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
@@ -544,6 +544,109 @@ def add_user(update: Update, context: CallbackContext) -> None:
     
     update.message.reply_text(f'Пользователь с ID {new_user_id} успешно добавлен.')
     log_action(user_id, 'add_user', f'user_id:{new_user_id}')
+
+def add_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    # Проверяем, что команду выполняет администратор
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Проверяем, что есть текст после команды
+    if not context.args and not update.message.text.split(' ', 1)[1:]:
+        update.message.reply_text('Пожалуйста, укажите список никнеймов пользователей для добавления.
+
+Пример: `/addusers @user1 @user2 @user3`
+Или отправьте список никнеймов, каждый в новой строке.')
+        return
+    
+    # Получаем текст после команды
+    if context.args:
+        # Если аргументы переданы через пробелы
+        usernames_text = ' '.join(context.args)
+    else:
+        # Если текст передан после команды
+        usernames_text = update.message.text.split(' ', 1)[1]
+    
+    # Разбиваем текст на строки и пробелы, удаляем пустые строки
+    usernames = [username.strip() for username in re.split(r'[\s\n]+', usernames_text) if username.strip()]
+    
+    # Проверяем формат никнеймов и удаляем @ если есть
+    clean_usernames = []
+    for username in usernames:
+        if username.startswith('@'):
+            clean_usernames.append(username[1:])  # Удаляем символ @
+        else:
+            clean_usernames.append(username)
+    
+    if not clean_usernames:
+        update.message.reply_text('Не удалось найти допустимые никнеймы в вашем списке.')
+        return
+    
+    # Подключаемся к базе данных
+    conn = sqlite3.connect('filmschool.db')
+    cursor = conn.cursor()
+    
+    # Статистика добавления
+    added_count = 0
+    already_exists_count = 0
+    not_found_count = 0
+    not_found_usernames = []
+    
+    # Проходим по всем никнеймам
+    for username in clean_usernames:
+        # Проверяем, есть ли пользователь в таблице pending_users
+        cursor.execute("SELECT user_id, username FROM pending_users WHERE username = ?", (username,))
+        pending_user = cursor.fetchone()
+        
+        if pending_user:
+            # Пользователь найден в ожидающих
+            pending_user_id, pending_username = pending_user
+            
+            # Проверяем, не существует ли уже такой пользователь в таблице users
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (pending_user_id,))
+            existing_user = cursor.fetchone()
+            
+            if not existing_user:
+                # Добавляем пользователя в таблицу users
+                now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute(
+                    "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (?, ?, ?, ?)", 
+                    (pending_user_id, username, now, 0)
+                )
+                
+                # Удаляем из ожидающих
+                cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (pending_user_id,))
+                
+                added_count += 1
+                log_action(user_id, 'add_user', f'username:@{username}, user_id:{pending_user_id}')
+            else:
+                already_exists_count += 1
+        else:
+            # Пользователь не найден в ожидающих
+            not_found_count += 1
+            not_found_usernames.append(username)
+    
+    conn.commit()
+    conn.close()
+    
+    # Формируем отчет
+    report = f'Добавлено пользователей: {added_count}
+'
+    report += f'Уже существуют: {already_exists_count}
+'
+    
+    if not_found_count > 0:
+        report += f'
+Не найдено в списке ожидающих: {not_found_count}
+'
+        if not_found_usernames:
+            report += 'Не найдены: ' + ', '.join([f'@{username}' for username in not_found_usernames[:10]])
+            if len(not_found_usernames) > 10:
+                report += f' и еще {len(not_found_usernames) - 10}'
+    
+    update.message.reply_text(report)
 
 def remove_user(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -1239,6 +1342,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("refresh", refresh_keyboard))
     dispatcher.add_handler(CommandHandler("adduser", add_user))
+    dispatcher.add_handler(CommandHandler("addusers", add_users))
     dispatcher.add_handler(CommandHandler("removeuser", remove_user))
     dispatcher.add_handler(CommandHandler("updatevideo", update_video))
     dispatcher.add_handler(CommandHandler("stats", show_stats))

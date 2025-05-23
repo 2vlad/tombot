@@ -451,9 +451,9 @@ def add_user(update: Update, context: CallbackContext) -> None:
         
         # Проверяем, есть ли пользователь в таблице pending_users
         if db_type == 'postgres':
-            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(%s) OR LOWER(username) = LOWER('@' || %s)", (username, username))
         else:
-            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(?) OR LOWER(username) = LOWER('@' || ?)", (username, username))
             
         pending_user = cursor.fetchone()
         
@@ -660,9 +660,9 @@ def add_users(update: Update, context: CallbackContext) -> None:
     clean_usernames = []
     for username in usernames:
         if username.startswith('@'):
-            clean_usernames.append(username[1:])  # Удаляем символ @
+            clean_usernames.append(username[1:].lower())  # Удаляем символ @ и приводим к нижнему регистру
         else:
-            clean_usernames.append(username)
+            clean_usernames.append(username.lower())  # Приводим к нижнему регистру
     
     if not clean_usernames:
         update.message.reply_text('Не удалось найти допустимые никнеймы в вашем списке.')
@@ -680,11 +680,25 @@ def add_users(update: Update, context: CallbackContext) -> None:
     
     # Проходим по всем никнеймам
     for username in clean_usernames:
+        # Сначала проверяем, есть ли пользователь уже в таблице users по имени пользователя
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s) OR LOWER(username) = LOWER('@' || %s)", (username, username))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(username) = LOWER('@' || ?)", (username, username))
+            
+        existing_user_by_name = cursor.fetchone()
+        
+        if existing_user_by_name:
+            # Пользователь уже существует в таблице users
+            already_exists_count += 1
+            print(f"Пользователь @{username} уже существует в таблице users")
+            continue
+        
         # Проверяем, есть ли пользователь в таблице pending_users
         if db_type == 'postgres':
-            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(%s) OR LOWER(username) = LOWER('@' || %s)", (username, username))
         else:
-            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(?) OR LOWER(username) = LOWER('@' || ?)", (username, username))
             
         pending_user = cursor.fetchone()
         
@@ -692,7 +706,7 @@ def add_users(update: Update, context: CallbackContext) -> None:
             # Пользователь найден в ожидающих
             pending_user_id = pending_user[0]
             
-            # Проверяем, не существует ли уже такой пользователь в таблице users
+            # Проверяем, не существует ли уже такой пользователь в таблице users по ID
             if db_type == 'postgres':
                 cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_user_id,))
             else:
@@ -722,9 +736,11 @@ def add_users(update: Update, context: CallbackContext) -> None:
                     cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (pending_user_id,))
                 
                 added_count += 1
+                print(f"Добавлен пользователь @{username} из pending_users с ID {pending_user_id}")
                 log_action(user_id, 'add_user', f'username:@{username}, user_id:{pending_user_id}')
             else:
                 already_exists_count += 1
+                print(f"Пользователь @{username} с ID {pending_user_id} уже существует в таблице users")
         else:
             # Пользователь не найден в ожидающих, добавляем его напрямую
             # Создаем временный ID (отрицательное число) - при первом взаимодействии с ботом он будет обновлен
@@ -744,7 +760,8 @@ def add_users(update: Update, context: CallbackContext) -> None:
                 )
             
             added_count += 1
-            log_action(user_id, 'add_user', f'username:@{username}, direct_add:true')
+            print(f"Добавлен новый пользователь @{username} с временным ID {temp_user_id}")
+            log_action(user_id, 'add_user', f'username:@{username}, direct_add:true, temp_id:{temp_user_id}')
     
     conn.commit()
     conn.close()
@@ -1175,9 +1192,9 @@ def check_users(update: Update, context: CallbackContext) -> None:
     clean_usernames = []
     for username in usernames:
         if username.startswith('@'):
-            clean_usernames.append(username[1:])  # Удаляем символ @
+            clean_usernames.append(username[1:].lower())  # Удаляем символ @ и приводим к нижнему регистру
         else:
-            clean_usernames.append(username)
+            clean_usernames.append(username.lower())  # Приводим к нижнему регистру
     
     if not clean_usernames:
         update.message.reply_text('Не удалось найти допустимые никнеймы в вашем списке.')
@@ -1197,9 +1214,9 @@ def check_users(update: Update, context: CallbackContext) -> None:
     for username in clean_usernames:
         # Проверяем, есть ли пользователь в таблице users
         if db_type == 'postgres':
-            cursor.execute("SELECT user_id FROM users WHERE username = %s", (username,))
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s) OR LOWER(username) = LOWER('@' || %s)", (username, username))
         else:
-            cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(username) = LOWER('@' || ?)", (username, username))
             
         user_result = cursor.fetchone()
         
@@ -1209,9 +1226,9 @@ def check_users(update: Update, context: CallbackContext) -> None:
         
         # Проверяем, есть ли пользователь в таблице pending_users
         if db_type == 'postgres':
-            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(%s) OR LOWER(username) = LOWER('@' || %s)", (username, username))
         else:
-            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(?) OR LOWER(username) = LOWER('@' || ?)", (username, username))
             
         pending_result = cursor.fetchone()
         
@@ -1310,7 +1327,7 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         update.message.reply_text('У вас нет прав для выполнения этой команды.')
         return
     
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Total users
@@ -1318,7 +1335,10 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     total_users = cursor.fetchone()[0]
     
     # Total admins
-    cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+    if db_type == 'postgres':
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = TRUE")
+    else:
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
     total_admins = cursor.fetchone()[0]
     
     # Count users who started the bot - используем все действия, не только start

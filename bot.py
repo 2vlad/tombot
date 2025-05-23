@@ -383,6 +383,7 @@ def help_command(update: Update, context: CallbackContext) -> None:
                 '*Команды администратора:*\n'
                 '/adduser <user_id> - Добавить пользователя по ID\n'
                 '/addusers @user1 @user2 ... - Массовое добавление пользователей по никнеймам\n'
+                '/checkusers @user1 @user2 ... - Проверить наличие пользователей в базе данных\n'
                 '/removeuser <user_id> - Удалить пользователя по ID\n'
                 '/makeadmin <user_id или @username> - Назначить пользователя администратором\n'
                 '/button1 "Текст кнопки" "URL" - Обновить текст и ссылку для кнопки 1\n'
@@ -1006,6 +1007,95 @@ def show_actions(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(actions_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_actions', 'admin_command')
 
+def check_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Получаем список пользователей для проверки
+    if not context.args:
+        update.message.reply_text('Пожалуйста, укажите список никнеймов для проверки.')
+        return
+    
+    # Получаем текст после команды
+    usernames_text = ' '.join(context.args)
+    
+    # Разбиваем текст на строки и пробелы, удаляем пустые строки
+    usernames = [username.strip() for username in re.split(r'[\s\n]+', usernames_text) if username.strip()]
+    
+    # Проверяем формат никнеймов и удаляем @ если есть
+    clean_usernames = []
+    for username in usernames:
+        if username.startswith('@'):
+            clean_usernames.append(username[1:])  # Удаляем символ @
+        else:
+            clean_usernames.append(username)
+    
+    if not clean_usernames:
+        update.message.reply_text('Не удалось найти допустимые никнеймы в вашем списке.')
+        return
+    
+    # Подключаемся к базе данных
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Статистика проверки
+    found_in_users = 0
+    found_in_pending = 0
+    not_found = 0
+    not_found_usernames = []
+    
+    # Проходим по всем никнеймам
+    for username in clean_usernames:
+        # Проверяем, есть ли пользователь в таблице users
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+            
+        user_result = cursor.fetchone()
+        
+        if user_result:
+            found_in_users += 1
+            continue
+        
+        # Проверяем, есть ли пользователь в таблице pending_users
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+            
+        pending_result = cursor.fetchone()
+        
+        if pending_result:
+            found_in_pending += 1
+        else:
+            not_found += 1
+            not_found_usernames.append(username)
+    
+    conn.close()
+    
+    # Формируем отчет
+    report = f"*Результаты проверки {len(clean_usernames)} пользователей:*\n\n"
+    report += f"Найдено в таблице users: {found_in_users}\n"
+    report += f"Найдено в таблице pending_users: {found_in_pending}\n"
+    report += f"Не найдено в базе данных: {not_found}\n"
+    
+    if not_found_usernames:
+        # Ограничиваем список ненайденных пользователей для избежания слишком длинного сообщения
+        shown_not_found = not_found_usernames[:10]
+        report += "\nНе найдены:\n"
+        for username in shown_not_found:
+            report += f"- @{username}\n"
+        
+        if len(not_found_usernames) > 10:
+            report += f"... и еще {len(not_found_usernames) - 10} пользователей"
+    
+    update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'check_users', 'admin_command')
+
 def list_users(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -1575,6 +1665,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("actions", show_actions))
     dispatcher.add_handler(CommandHandler("listusers", list_users))
     dispatcher.add_handler(CommandHandler("users", list_users))
+    dispatcher.add_handler(CommandHandler("checkusers", check_users))
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
     dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
     

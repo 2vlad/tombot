@@ -1006,6 +1006,67 @@ def show_actions(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(actions_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_actions', 'admin_command')
 
+def list_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Получаем опциональный параметр команды - количество пользователей для отображения
+    limit = 10  # По умолчанию показываем только 10 пользователей
+    if context.args and context.args[0].isdigit():
+        limit = int(context.args[0])
+    
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Получаем общее количество пользователей
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    # Получаем список пользователей с ограничением
+    if db_type == 'postgres':
+        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT %s", (limit,))
+    else:
+        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT ?", (limit,))
+    
+    users = cursor.fetchall()
+    conn.close()
+    
+    # Формируем текст сообщения
+    message = f"*Список пользователей*\n\nВсего пользователей: {total_users}\n\n"
+    
+    if users:
+        for i, user in enumerate(users, 1):
+            user_id, username, first_name, last_name, is_admin = user
+            
+            # Формируем отображаемое имя пользователя
+            user_display = f"@{username}" if username else f"ID: {user_id}"
+            
+            if first_name or last_name:
+                name = f"{first_name or ''} {last_name or ''}" .strip()
+                if username:
+                    user_display += f" ({name})"
+                else:
+                    user_display = f"{name} ({user_display})"
+            
+            # Добавляем метку администратора
+            if is_admin:
+                user_display += " (Админ)"
+            
+            message += f"{i}. {user_display}\n"
+        
+        # Если есть еще пользователи, которые не поместились в ограничение
+        if total_users > limit:
+            message += f"\nИ еще {total_users - limit} пользователей..."
+            message += f"\n\nДля просмотра большего количества пользователей используйте команду /users <количество>"
+    else:
+        message += "Пользователи не найдены."
+    
+    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'list_users', 'admin_command')
+
 def show_stats(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -1513,6 +1574,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("stats", show_stats))
     dispatcher.add_handler(CommandHandler("actions", show_actions))
     dispatcher.add_handler(CommandHandler("listusers", list_users))
+    dispatcher.add_handler(CommandHandler("users", list_users))
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
     dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
     

@@ -1030,6 +1030,14 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     """)
     started_bot_count = cursor.fetchone()[0]
     
+    # Получаем список всех пользователей для отображения в статистике
+    cursor.execute("SELECT user_id, username, first_name, last_name FROM users")
+    all_users = cursor.fetchall()
+    
+    # Создаем список пользователей, которые запустили бота
+    cursor.execute("SELECT DISTINCT user_id FROM logs")
+    active_users = set([row[0] for row in cursor.fetchall()])
+    
     # Video access count for each button
     cursor.execute("""
     SELECT COUNT(*) FROM logs 
@@ -1085,9 +1093,14 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     stats_text = (
         f'*Статистика бота*\n\n'
         f'Всего пользователей: {total_users}\n'
-        f'Запустили бота: {started_bot_count}\n'
+        f'Запустили бота: {len(active_users)}\n'
         f'Администраторов: {total_admins}\n\n'
     )
+    
+    # Если есть пользователи, которые были добавлены, но не запустили бота
+    inactive_users = total_users - len(active_users)
+    if inactive_users > 0:
+        stats_text += f'Добавлено, но не запустили бота: {inactive_users}\n\n'
     
     # Add detailed statistics for the latest video
     stats_text += f'*Запись занятия 18 мая получили ({latest_video_unique_users}):*\n'

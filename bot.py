@@ -762,10 +762,11 @@ def update_button(update: Update, context: CallbackContext) -> None:
         button_url = matches[1]
         
         # Создаем новый текст сообщения с указанной ссылкой
-        # Форматируем ссылку так, чтобы она шла сразу после двоеточия
-        message_text = f'Запись занятия: {button_url}
+        # Согласно предпочтениям пользователя, URL должен идти сразу после двоеточия
+        # Используем тройные кавычки для многострочной строки
+        message_text = f"Запись занятия: {button_url}
 
-Запись доступна в течение 7 дней.'
+Запись доступна в течение 7 дней."
         
         # Обновляем глобальные переменные в зависимости от номера кнопки
         global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS

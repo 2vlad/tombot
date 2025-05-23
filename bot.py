@@ -392,6 +392,7 @@ def help_command(update: Update, context: CallbackContext) -> None:
                 '/addusers @user1 @user2 ... - Массовое добавление пользователей по никнеймам\n'
                 '/checkusers @user1 @user2 ... - Проверить наличие пользователей в базе данных\n'
                 '/diagnosedb - Диагностика базы данных\n'
+                '/initdb - Инициализация базы данных (создание таблиц)\n'
                 '/removeuser <user_id> - Удалить пользователя по ID\n'
                 '/makeadmin <user_id или @username> - Назначить пользователя администратором\n'
                 '/button1 "Текст кнопки" "URL" - Обновить текст и ссылку для кнопки 1\n'
@@ -1030,7 +1031,24 @@ def show_actions(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(actions_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_actions', 'admin_command')
 
+def init_db_command(update: Update, context: CallbackContext) -> None:
+    """Инициализация базы данных через команду бота"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    try:
+        # Вызываем функцию инициализации базы данных
+        from init_db import init_database
+        init_database()
+        update.message.reply_text("✅ База данных успешно инициализирована! Все необходимые таблицы созданы.")
+    except Exception as e:
+        update.message.reply_text(f"❌ Ошибка при инициализации базы данных: {str(e)}")
+
 def diagnose_db(update: Update, context: CallbackContext) -> None:
+    """Диагностика базы данных для проверки структуры и наличия пользователей"""
     user_id = update.effective_user.id
     
     if not is_admin(user_id):
@@ -1802,6 +1820,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("users", list_users))
     dispatcher.add_handler(CommandHandler("checkusers", check_users))
     dispatcher.add_handler(CommandHandler("diagnosedb", diagnose_db))
+    dispatcher.add_handler(CommandHandler("initdb", init_db_command))
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
     dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
     

@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 # Администратор также добавляется в модуле db_utils
 
 # User authentication
-def is_user_authorized(user_id, username=None):
+def is_user_authorized(user_id, username=None, phone_number=None):
     conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
@@ -73,6 +73,14 @@ def is_user_authorized(user_id, username=None):
             cursor.execute("SELECT user_id FROM users WHERE username = %s", (username,))
         else:
             cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+    
+    # Если не нашли по ID и username, но есть phone_number, проверяем по нему
+    if result is None and phone_number:
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = %s", (phone_number,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = ?", (phone_number,))
         result = cursor.fetchone()
     
     conn.close()
@@ -693,7 +701,7 @@ def remove_user(update: Update, context: CallbackContext) -> None:
             update.message.reply_text(f'Пользователь @{username} не найден.')
             conn.close()
             return
-        
+            
         remove_user_id, is_admin_flag = user_data
         
         # Проверяем, является ли пользователь администратором

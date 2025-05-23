@@ -6,6 +6,7 @@ import sqlite3
 import os
 import time
 import re
+import random
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, ParseMode, ReplyKeyboardMarkup, KeyboardButton
@@ -717,25 +718,40 @@ def add_users(update: Update, context: CallbackContext) -> None:
             else:
                 already_exists_count += 1
         else:
-            # Пользователь не найден в ожидающих
-            not_found_count += 1
-            not_found_usernames.append(username)
+            # Пользователь не найден в ожидающих, добавляем его напрямую
+            # Создаем временный ID (отрицательное число) - при первом взаимодействии с ботом он будет обновлен
+            temp_user_id = -int(time.time()) - random.randint(1, 1000)  # Используем текущее время и случайное число как временный ID
+            now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Добавляем пользователя в таблицу users
+            if db_type == 'postgres':
+                cursor.execute(
+                    "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (%s, %s, %s, %s)", 
+                    (temp_user_id, username, now, False)
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (?, ?, ?, ?)", 
+                    (temp_user_id, username, now, 0)
+                )
+            
+            added_count += 1
+            log_action(user_id, 'add_user', f'username:@{username}, direct_add:true')
     
     conn.commit()
     conn.close()
     
     # Формируем отчет
-    report = f"Добавлено пользователей: {added_count}"
-    report += f"\nУже существуют: {already_exists_count}"
+    report = f"*Результаты добавления пользователей:*\n\n"
+    report += f"Добавлено новых пользователей: {added_count}\n"
+    report += f"Уже существуют в базе: {already_exists_count}\n"
+    report += f"Всего обработано пользователей: {len(clean_usernames)}"
     
-    if not_found_count > 0:
-        report += f"\n\nНе найдено в списке ожидающих: {not_found_count}"
-        if not_found_usernames:
-            report += "\nНе найдены: " + ", ".join([f"@{username}" for username in not_found_usernames[:10]])
-            if len(not_found_usernames) > 10:
-                report += f" и еще {len(not_found_usernames) - 10}"
+    # Добавляем информацию о том, что пользователи добавлены и что нужно сделать дальше
+    report += "\n\nВсе пользователи успешно добавлены в базу данных."
+    report += "\nДля проверки используйте команду /checkusers с теми же пользователями."
     
-    update.message.reply_text(report)
+    update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
 
 def remove_user(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id

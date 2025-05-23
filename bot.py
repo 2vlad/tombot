@@ -411,8 +411,11 @@ def add_user(update: Update, context: CallbackContext) -> None:
     
     user_identifier = context.args[0]
     
+    # Добавляем отладочный вывод
+    update.message.reply_text(f'Получен идентификатор: {user_identifier}')
+    
     # Проверяем, является ли идентификатор числом (ID), именем пользователя или номером телефона
-    if user_identifier.isdigit():
+    if user_identifier.isdigit() and len(user_identifier) < 10:
         # Если это ID
         new_user_id = int(user_identifier)
         username = None
@@ -502,10 +505,18 @@ def add_user(update: Update, context: CallbackContext) -> None:
         )
         log_action(user_id, 'add_user', f'username:@{username}')
         return
-    elif user_identifier.startswith('+'):
-        # Если это номер телефона (начинается с +)
-        phone_number = user_identifier
+    elif user_identifier.startswith('+') or (user_identifier.isdigit() and len(user_identifier) >= 10):
+        # Если это номер телефона (начинается с + или это число длиной от 10 цифр)
+        # Если номер не начинается с +, добавляем его
+        if not user_identifier.startswith('+'):
+            phone_number = '+' + user_identifier
+        else:
+            phone_number = user_identifier
+            
         username = None
+        
+        # Добавляем отладочный вывод
+        update.message.reply_text(f'Обрабатываю номер телефона: {phone_number}')
         
         # Проверяем, есть ли пользователь с таким номером телефона в базе
         conn, db_type = get_db_connection()

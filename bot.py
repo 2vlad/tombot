@@ -15,6 +15,12 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 # Импортируем модуль для работы с базой данных
 from db_utils import setup_database, get_db_connection, load_buttons, save_button
 
+# Импортируем функцию инициализации базы данных
+try:
+    from init_db import init_database
+except ImportError:
+    print("Модуль init_db.py не найден, инициализация базы данных не будет выполнена")
+
 # Настройки бота - можно легко изменять
 
 # Настройки кнопок и сообщений
@@ -1757,6 +1763,13 @@ def make_admin(update: Update, context: CallbackContext) -> None:
     conn.close()
 
 def main() -> None:
+    # Initialize database with all required tables
+    try:
+        init_database()
+        print("База данных успешно инициализирована")
+    except Exception as e:
+        print(f"Ошибка при инициализации базы данных: {e}")
+    
     # Setup database
     setup_database()
     

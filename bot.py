@@ -1441,12 +1441,11 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     
     # Format basic statistics
     stats_text = (
-        f'*Статистика бота*
-
-'
-        f'Всего пользователей: {total_users}
-'
-        f'Запустили бота: {len(active_users)}
+        '*u0421u0442u0430u0442u0438u0441u0442u0438u043au0430 u0431u043eu0442u0430*\n\n'
+        f'u0412u0441u0435u0433u043e u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439: {total_users}\n'
+        f'u0417u0430u043fu0443u0441u0442u0438u043bu0438 u0431u043eu0442u0430: {len(active_users)}\n'
+        f'u0410u0434u043cu0438u043du0438u0441u0442u0440u0430u0442u043eu0440u043eu0432: {total_admins}\n\n'
+    )
 '
         f'Администраторов: {total_admins}
 

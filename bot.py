@@ -1321,11 +1321,12 @@ def list_users(update: Update, context: CallbackContext) -> None:
     log_action(user_id, 'list_users', 'admin_command')
 
 
+
 def show_stats(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
     if not is_admin(user_id):
-        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        update.message.reply_text("У вас нет прав для выполнения этой команды.")
         return
     
     conn, db_type = get_db_connection()
@@ -1342,17 +1343,17 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
     total_admins = cursor.fetchone()[0]
     
-    # Count users who started the bot - используем все действия, не только start
+    # Count users who started the bot
     cursor.execute("""
     SELECT COUNT(DISTINCT user_id) FROM logs
     """)
     started_bot_count = cursor.fetchone()[0]
     
-    # Получаем список всех пользователей для отображения в статистике
+    # Get list of all users for display in stats
     cursor.execute("SELECT user_id, username, first_name, last_name FROM users")
     all_users = cursor.fetchall()
     
-    # Создаем список пользователей, которые запустили бота
+    # Create list of users who started the bot
     cursor.execute("SELECT DISTINCT user_id FROM logs")
     active_users = set([row[0] for row in cursor.fetchall()])
     
@@ -1440,109 +1441,108 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     conn.close()
     
     # Format basic statistics
-    stats_text = (
-        '*u0421u0442u0430u0442u0438u0441u0442u0438u043au0430 u0431u043eu0442u0430*\n\n'
-        f'u0412u0441u0435u0433u043e u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439: {total_users}\n'
-        f'u0417u0430u043fu0443u0441u0442u0438u043bu0438 u0431u043eu0442u0430: {len(active_users)}\n'
-        f'u0410u0434u043cu0438u043du0438u0441u0442u0440u0430u0442u043eu0440u043eu0432: {total_admins}\n\n'
-    )
-'
-        f'Администраторов: {total_admins}
+    stats_text = "*Статистика бота*
 
-'
-    )
+"
+    stats_text += f"Всего пользователей: {total_users}
+"
+    stats_text += f"Запустили бота: {len(active_users)}
+"
+    stats_text += f"Администраторов: {total_admins}
+
+"
     
-    # Если есть пользователи, которые были добавлены, но не запустили бота
+    # If there are users who were added but didn't start the bot
     inactive_users = total_users - len(active_users)
     if inactive_users > 0:
-        stats_text += f'Добавлено, но не запустили бота: {inactive_users}
+        stats_text += f"Добавлено, но не запустили бота: {inactive_users}
 
-'
+"
     
     # Add detailed statistics for the latest video
-    stats_text += f'*Запись занятия 18 мая получили ({latest_video_unique_users}):*
-'
+    stats_text += f"*Запись занятия 18 мая получили ({latest_video_unique_users}):*
+"
     if latest_video_users:
         for user in latest_video_users:
             username, first_name, last_name, user_id, access_times = user
-            # Если есть username, используем его, иначе используем user_id
+            # If there's a username, use it, otherwise use user_id
             if username:
-                user_display = f'@{username}'
+                user_display = f"@{username}"
             else:
-                user_display = f'ID: {user_id}'
+                user_display = f"ID: {user_id}"
                 
             if first_name or last_name:
-                name = f'{first_name or ""} {last_name or ""}' .strip()
+                name = f"{first_name or ''} {last_name or ''}" .strip()
                 if username:
-                    user_display += f' ({name})'
+                    user_display += f" ({name})"
                 else:
-                    user_display = f'{name} ({user_display})'
+                    user_display = f"{name} ({user_display})"
             elif not username:
-                user_display = f'Пользователь {user_display}'
+                user_display = f"Пользователь {user_display}"
             
             # Format access times to show all timestamps when user accessed the video
             timestamps = access_times.split(', ')
             if len(timestamps) > 1:
-                # Ограничиваем количество отображаемых временных меток для избежания проблем с Markdown
+                # Limit the number of displayed timestamps to avoid issues with Markdown
                 if len(timestamps) > 3:
-                    time_display = f'({timestamps[0]}, {timestamps[1]}, ... и еще {len(timestamps)-2})'
+                    time_display = f"({timestamps[0]}, {timestamps[1]}, ... и еще {len(timestamps)-2})"
                 else:
-                    time_display = f'({timestamps[0]}'
+                    time_display = f"({timestamps[0]}"
                     for ts in timestamps[1:]:
-                        time_display += f', {ts}'
-                    time_display += ')'
+                        time_display += f", {ts}"
+                    time_display += ")"
             else:
-                time_display = f'({access_times})'
+                time_display = f"({access_times})"
             
-            stats_text += f'- {user_display} {time_display}
-'
+            stats_text += f"- {user_display} {time_display}
+"
     else:
-        stats_text += 'Никто еще не получил запись.
-'
+        stats_text += "Никто еще не получил запись.
+"
     
     # Add detailed statistics for the previous video
-    stats_text += f'
+    stats_text += f"
 *Запись занятия 22 мая получили ({previous_video_unique_users}):*
-'
+"
     if previous_video_users:
         for user in previous_video_users:
             username, first_name, last_name, user_id, access_times = user
-            # Если есть username, используем его, иначе используем user_id
+            # If there's a username, use it, otherwise use user_id
             if username:
-                user_display = f'@{username}'
+                user_display = f"@{username}"
             else:
-                user_display = f'ID: {user_id}'
+                user_display = f"ID: {user_id}"
                 
             if first_name or last_name:
-                name = f'{first_name or ""} {last_name or ""}' .strip()
+                name = f"{first_name or ''} {last_name or ''}" .strip()
                 if username:
-                    user_display += f' ({name})'
+                    user_display += f" ({name})"
                 else:
-                    user_display = f'{name} ({user_display})'
+                    user_display = f"{name} ({user_display})"
             elif not username:
-                user_display = f'Пользователь {user_display}'
+                user_display = f"Пользователь {user_display}"
             
             # Format access times to show all timestamps when user accessed the video
             timestamps = access_times.split(', ')
             if len(timestamps) > 1:
-                # Ограничиваем количество отображаемых временных меток для избежания проблем с Markdown
+                # Limit the number of displayed timestamps to avoid issues with Markdown
                 if len(timestamps) > 3:
-                    time_display = f'({timestamps[0]}, {timestamps[1]}, ... и еще {len(timestamps)-2})'
+                    time_display = f"({timestamps[0]}, {timestamps[1]}, ... и еще {len(timestamps)-2})"
                 else:
-                    time_display = f'({timestamps[0]}'
+                    time_display = f"({timestamps[0]}"
                     for ts in timestamps[1:]:
-                        time_display += f', {ts}'
-                    time_display += ')'
+                        time_display += f", {ts}"
+                    time_display += ")"
             else:
-                time_display = f'({access_times})'
+                time_display = f"({access_times})"
             
-            stats_text += f'- {user_display} {time_display}
-'
+            stats_text += f"- {user_display} {time_display}
+"
     else:
-        stats_text += 'Никто еще не получил запись.
-'
+        stats_text += "Никто еще не получил запись.
+"
     
-    # Отправляем статистику
+    # Send statistics
     update.message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_stats', 'admin_command')
 

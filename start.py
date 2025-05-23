@@ -19,6 +19,8 @@ except Exception as e:
 print("Запускаем исправление базы данных для Railway...")
 try:
     import railway_fix
+    # Явно вызываем функцию исправления
+    railway_fix.auto_fix_railway()
     print("Исправление базы данных для Railway завершено!")
 except Exception as e:
     print(f"Ошибка при исправлении базы данных для Railway: {e}")

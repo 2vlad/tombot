@@ -406,12 +406,12 @@ def add_user(update: Update, context: CallbackContext) -> None:
         return
     
     if not context.args:
-        update.message.reply_text('Пожалуйста, укажите Telegram ID или @username пользователя.')
+        update.message.reply_text('Пожалуйста, укажите Telegram ID, @username или номер телефона пользователя.')
         return
     
     user_identifier = context.args[0]
     
-    # Проверяем, является ли идентификатор числом (ID) или именем пользователя
+    # Проверяем, является ли идентификатор числом (ID), именем пользователя или номером телефона
     if user_identifier.isdigit():
         # Если это ID
         new_user_id = int(user_identifier)
@@ -462,23 +462,27 @@ def add_user(update: Update, context: CallbackContext) -> None:
                 
                 # Добавляем пользователя в авторизованные
                 if db_type == 'postgres':
-                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (%s, %s, %s, %s, %s)", 
-                                   (user_id, username, first_name, last_name, now))
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (%s, %s, %s, %s, %s)", 
+                        (user_id, username, first_name, last_name, now)
+                    )
                     
-                    # Удаляем из pending_users
+                    # Удаляем из ожидающих
                     cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (user_id,))
                 else:
-                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (?, ?, ?, ?, ?)", 
-                                   (user_id, username, first_name, last_name, now))
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (?, ?, ?, ?, ?)", 
+                        (user_id, username, first_name, last_name, now)
+                    )
                     
-                    # Удаляем из pending_users
+                    # Удаляем из ожидающих
                     cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (user_id,))
                 
                 conn.commit()
                 conn.close()
                 
                 update.message.reply_text(f'Пользователь @{username} (ID: {user_id}) успешно добавлен.')
-                log_action(user_id, 'add_user', f'user_id:{user_id}')
+                log_action(user_id, 'add_user', f'username:@{username}, user_id:{user_id}')
                 return
         
         # Если пользователь не найден в pending_users, добавляем его напрямую
@@ -498,8 +502,92 @@ def add_user(update: Update, context: CallbackContext) -> None:
         )
         log_action(user_id, 'add_user', f'username:@{username}')
         return
+    elif user_identifier.startswith('+'):
+        # Если это номер телефона (начинается с +)
+        phone_number = user_identifier
+        username = None
+        
+        # Проверяем, есть ли пользователь с таким номером телефона в базе
+        conn, db_type = get_db_connection()
+        cursor = conn.cursor()
+        
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = %s", (phone_number,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = ?", (phone_number,))
+            
+        existing_user = cursor.fetchone()
+        
+        if existing_user:
+            update.message.reply_text(f'Пользователь с номером {phone_number} уже зарегистрирован.')
+            conn.close()
+            return
+        
+        # Проверяем, есть ли пользователь в таблице pending_users
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE phone_number = %s", (phone_number,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE phone_number = ?", (phone_number,))
+            
+        pending_user = cursor.fetchone()
+        
+        if pending_user:
+            # Если пользователь уже взаимодействовал с ботом, добавляем его из pending_users
+            new_user_id = pending_user[0]
+            
+            # Получаем полную информацию о пользователе
+            if db_type == 'postgres':
+                cursor.execute("SELECT user_id, username, first_name, last_name, phone_number, request_date FROM pending_users WHERE user_id = %s", (new_user_id,))
+            else:
+                cursor.execute("SELECT user_id, username, first_name, last_name, phone_number, request_date FROM pending_users WHERE user_id = ?", (new_user_id,))
+                
+            user_data = cursor.fetchone()
+            
+            if user_data:
+                user_id_data, username_data, first_name, last_name, phone_number_data, _ = user_data
+                now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Добавляем пользователя в авторизованные
+                if db_type == 'postgres':
+                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, phone_number, registration_date) VALUES (%s, %s, %s, %s, %s, %s)", 
+                                   (user_id_data, username_data, first_name, last_name, phone_number_data, now))
+                    
+                    # Удаляем из pending_users
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (user_id_data,))
+                else:
+                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, phone_number, registration_date) VALUES (?, ?, ?, ?, ?, ?)", 
+                                   (user_id_data, username_data, first_name, last_name, phone_number_data, now))
+                    
+                    # Удаляем из pending_users
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (user_id_data,))
+                
+                conn.commit()
+                conn.close()
+                
+                update.message.reply_text(f'Пользователь с номером {phone_number} (ID: {user_id_data}) успешно добавлен.')
+                log_action(user_id, 'add_user', f'phone_number:{phone_number}, user_id:{user_id_data}')
+                return
+        
+        # Если пользователь не найден в pending_users, добавляем его напрямую
+        # Создаем временный ID (отрицательное число) - при первом взаимодействии с ботом он будет обновлен
+        temp_user_id = -int(time.time())  # Используем текущее время как временный ID
+        now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+        
+        if db_type == 'postgres':
+            cursor.execute("INSERT INTO users (user_id, phone_number, registration_date) VALUES (%s, %s, %s)", 
+                          (temp_user_id, phone_number, now))
+        else:
+            cursor.execute("INSERT INTO users (user_id, phone_number, registration_date) VALUES (?, ?, ?)", 
+                          (temp_user_id, phone_number, now))
+        
+        conn.commit()
+        conn.close()
+        
+        update.message.reply_text(f'Пользователь с номером {phone_number} успешно добавлен.')
+        log_action(user_id, 'add_user', f'phone_number:{phone_number}')
+        return
     else:
-        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
+        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID, @username или номер телефона пользователя.')
         return
     
     conn = sqlite3.connect('filmschool.db')
@@ -573,15 +661,15 @@ def add_users(update: Update, context: CallbackContext) -> None:
     for username in clean_usernames:
         # Проверяем, есть ли пользователь в таблице pending_users
         if db_type == 'postgres':
-            cursor.execute("SELECT user_id, username FROM pending_users WHERE username = %s", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
         else:
-            cursor.execute("SELECT user_id, username FROM pending_users WHERE username = ?", (username,))
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
             
         pending_user = cursor.fetchone()
         
         if pending_user:
             # Пользователь найден в ожидающих
-            pending_user_id, pending_username = pending_user
+            pending_user_id = pending_user[0]
             
             # Проверяем, не существует ли уже такой пользователь в таблице users
             if db_type == 'postgres':

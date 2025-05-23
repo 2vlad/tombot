@@ -68,7 +68,9 @@ def direct_add_users_to_railway(database_url, users):
     
     try:
         # u041fu043eu0434u043au043bu044eu0447u0430u0435u043cu0441u044f u043a u0431u0430u0437u0435 u0434u0430u043du043du044bu0445
+        conn = None
         conn = psycopg2.connect(database_url)
+        conn.autocommit = False  # Отключаем автокоммит для транзакций
         cursor = conn.cursor()
         
         print("u0423u0441u043fu0435u0448u043du043e u043fu043eu0434u043au043bu044eu0447u0438u043bu0438u0441u044c u043a u0431u0430u0437u0435 u0434u0430u043du043du044bu0445 PostgreSQL!")
@@ -99,43 +101,50 @@ def direct_add_users_to_railway(database_url, users):
                 phone_number TEXT
             )
             """)
-            
+            conn.commit()
             print("u0422u0430u0431u043bu0438u0446u0430 'users' u0443u0441u043fu0435u0448u043du043e u0441u043eu0437u0434u0430u043du0430!")
         
         # u0414u043eu0431u0430u0432u043bu044fu0435u043c u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439
         added_count = 0
         already_exists_count = 0
+        error_count = 0
         
         print(f"\nu041du0430u0447u0438u043du0430u044e u0434u043eu0431u0430u0432u043bu0435u043du0438u0435 {len(users)} u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439...")
         
         for username in users:
             username = username.lower()
             
-            # u041fu0440u043eu0432u0435u0440u044fu0435u043c, u0435u0441u0442u044c u043bu0438 u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044c u0443u0436u0435 u0432 u0442u0430u0431u043bu0438u0446u0435 users
-            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
-            existing_user = cursor.fetchone()
-            
-            if existing_user:
-                print(f"u041fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044c @{username} u0443u0436u0435 u0441u0443u0449u0435u0441u0442u0432u0443u0435u0442 u0441 ID {existing_user[0]}")
-                already_exists_count += 1
-                continue
-            
-            # u0421u043eu0437u0434u0430u0435u043c u0432u0440u0435u043cu0435u043du043du044bu0439 ID (u043eu0442u0440u0438u0446u0430u0442u0435u043bu044cu043du043eu0435 u0447u0438u0441u043bu043e)
-            temp_user_id = -int(time.time()) - random.randint(1, 1000)
-            now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
-            
-            # u0414u043eu0431u0430u0432u043bu044fu0435u043c u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044f u0432 u0442u0430u0431u043bu0438u0446u0443 users
             try:
+                # u041fu0440u043eu0432u0435u0440u044fu0435u043c, u0435u0441u0442u044c u043bu0438 u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044c u0443u0436u0435 u0432 u0442u0430u0431u043bu0438u0446u0435 users
+                cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
+                existing_user = cursor.fetchone()
+                
+                if existing_user:
+                    print(f"u041fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044c @{username} u0443u0436u0435 u0441u0443u0449u0435u0441u0442u0432u0443u0435u0442 u0441 ID {existing_user[0]}")
+                    already_exists_count += 1
+                    continue
+                
+                # u0421u043eu0437u0434u0430u0435u043c u0432u0440u0435u043cu0435u043du043du044bu0439 ID (u043eu0442u0440u0438u0446u0430u0442u0435u043bu044cu043du043eu0435 u0447u0438u0441u043bu043e)
+                # Используем текущее время в микросекундах для уникальности
+                temp_user_id = -int(time.time() * 1000000) - random.randint(1, 1000000)
+                now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+                
+                # u0414u043eu0431u0430u0432u043bu044fu0435u043c u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044a u0432 u0442u0430u0431u043bu0438u0446u0443 users
                 cursor.execute(
                     "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (%s, %s, %s, %s)", 
                     (temp_user_id, username, now, False)
                 )
                 
-                print(f"u0414u043eu0431u0430u0432u043bu0435u043d u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044c @{username} u0441 ID {temp_user_id}")
+                # Коммитим каждую успешную вставку отдельно
+                conn.commit()
+                print(f"u0414u043eu0431u0430u0432u043bu0435u043du043e u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044a @{username} u0441 ID {temp_user_id}")
                 added_count += 1
                 
             except Exception as e:
-                print(f"u041eu0448u0438u0431u043au0430 u043fu0440u0438 u0434u043eu0431u0430u0432u043bu0435u043du0438u0438 u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044f @{username}: {e}")
+                # Откатываем транзакцию при ошибке
+                conn.rollback()
+                print(f"u041eu0448u0438u0431u043au0430 u043fu0440u0438 u0434u043eu0431u0430u0432u043bu0435u043du0438u0438 u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu044a @{username}: {e}")
+                error_count += 1
         
         # u0421u043eu0445u0440u0430u043du044fu0435u043c u0438u0437u043cu0435u043du0435u043du0438u044f
         conn.commit()
@@ -143,7 +152,8 @@ def direct_add_users_to_railway(database_url, users):
         # u041fu0440u043eu0432u0435u0440u044fu0435u043c u0440u0435u0437u0443u043bu044cu0442u0430u0442
         print(f"\nu0420u0435u0437u0443u043bu044cu0442u0430u0442u044b:")
         print(f"u0414u043eu0431u0430u0432u043bu0435u043du043e u043du043eu0432u044bu0445 u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439: {added_count}")
-        print(f"u0423u0436u0435 u0441u0443u0449u0435u0441u0442u0432u043eu0432u0430u043bu0438: {already_exists_count}")
+        print(f"u0423u0436u0435 u0441u0443u0449u0435u0441u0442u0432u0443u0435u0442: {already_exists_count}")
+        print(f"u041eu0448u0438u0431u043eu043a: {error_count}")
         
         # u041fu0440u043eu0432u0435u0440u044fu0435u043c, u0447u0442u043e u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0438 u0434u0435u0439u0441u0442u0432u0438u0442u0435u043bu044cu043du043e u0434u043eu0431u0430u0432u043bu0435u043du044b
         print("\nu041fu0440u043eu0432u0435u0440u044fu0435u043c u0434u043eu0431u0430u0432u043bu0435u043du043du044bu0445 u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439:")
@@ -172,8 +182,7 @@ def main():
     # u041eu0431u044au0435u0434u0438u043du044fu0435u043c u0441u043fu0438u0441u043eu043a u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439 u0438 u0442u0435u043bu0435u0444u043eu043du043du044bu0435 u043du043eu043cu0435u0440u0430
     users = USERS_TO_ADD + PHONE_NUMBERS
     
-    print(f"Вu0441u0435u0433u043e u0431u0443u0434u0435u0442 u0434u043eu0431u0430u0432u043bu0435u043du043e {len(users)} u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439
-")
+    print(f"Всего будет добавлено {len(users)} пользователей")
     
     # u0414u043eu0431u0430u0432u043bu044fu0435u043c u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439
     direct_add_users_to_railway(database_url, users)

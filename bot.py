@@ -1320,6 +1320,7 @@ def list_users(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'list_users', 'admin_command')
 
+
 def show_stats(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -1369,58 +1370,99 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     previous_video_count = cursor.fetchone()[0]
     
     # Get users who accessed the latest video with all their access timestamps
-    cursor.execute("""
-    SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
-    FROM logs 
-    WHERE action = 'get_latest_video'
-    GROUP BY COALESCE(username, user_id)
-    ORDER BY MAX(timestamp) DESC
-    """)
+    if db_type == 'postgres':
+        cursor.execute("""
+        SELECT username, first_name, last_name, user_id, STRING_AGG(timestamp::text, ', ') as access_times
+        FROM logs 
+        WHERE action = 'get_latest_video'
+        GROUP BY COALESCE(username, user_id), username, first_name, last_name, user_id
+        ORDER BY MAX(timestamp) DESC
+        """)
+    else:
+        cursor.execute("""
+        SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
+        FROM logs 
+        WHERE action = 'get_latest_video'
+        GROUP BY COALESCE(username, user_id)
+        ORDER BY MAX(timestamp) DESC
+        """)
     latest_video_users = cursor.fetchall()
     
     # Get count of unique users who accessed the latest video
-    cursor.execute("""
-    SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
-    FROM logs 
-    WHERE action = 'get_latest_video'
-    """)
+    if db_type == 'postgres':
+        cursor.execute("""
+        SELECT COUNT(DISTINCT COALESCE(username::text, user_id::text)) 
+        FROM logs 
+        WHERE action = 'get_latest_video'
+        """)
+    else:
+        cursor.execute("""
+        SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
+        FROM logs 
+        WHERE action = 'get_latest_video'
+        """)
     latest_video_unique_users = cursor.fetchone()[0]
     
     # Get users who accessed the previous video with all their access timestamps
-    cursor.execute("""
-    SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
-    FROM logs 
-    WHERE action = 'get_previous_video'
-    GROUP BY COALESCE(username, user_id)
-    ORDER BY MAX(timestamp) DESC
-    """)
+    if db_type == 'postgres':
+        cursor.execute("""
+        SELECT username, first_name, last_name, user_id, STRING_AGG(timestamp::text, ', ') as access_times
+        FROM logs 
+        WHERE action = 'get_previous_video'
+        GROUP BY COALESCE(username, user_id), username, first_name, last_name, user_id
+        ORDER BY MAX(timestamp) DESC
+        """)
+    else:
+        cursor.execute("""
+        SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
+        FROM logs 
+        WHERE action = 'get_previous_video'
+        GROUP BY COALESCE(username, user_id)
+        ORDER BY MAX(timestamp) DESC
+        """)
     previous_video_users = cursor.fetchall()
     
     # Get count of unique users who accessed the previous video
-    cursor.execute("""
-    SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
-    FROM logs 
-    WHERE action = 'get_previous_video'
-    """)
+    if db_type == 'postgres':
+        cursor.execute("""
+        SELECT COUNT(DISTINCT COALESCE(username::text, user_id::text)) 
+        FROM logs 
+        WHERE action = 'get_previous_video'
+        """)
+    else:
+        cursor.execute("""
+        SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
+        FROM logs 
+        WHERE action = 'get_previous_video'
+        """)
     previous_video_unique_users = cursor.fetchone()[0]
     
     conn.close()
     
     # Format basic statistics
     stats_text = (
-        f'*Статистика бота*\n\n'
-        f'Всего пользователей: {total_users}\n'
-        f'Запустили бота: {len(active_users)}\n'
-        f'Администраторов: {total_admins}\n\n'
+        f'*Статистика бота*
+
+'
+        f'Всего пользователей: {total_users}
+'
+        f'Запустили бота: {len(active_users)}
+'
+        f'Администраторов: {total_admins}
+
+'
     )
     
     # Если есть пользователи, которые были добавлены, но не запустили бота
     inactive_users = total_users - len(active_users)
     if inactive_users > 0:
-        stats_text += f'Добавлено, но не запустили бота: {inactive_users}\n\n'
+        stats_text += f'Добавлено, но не запустили бота: {inactive_users}
+
+'
     
     # Add detailed statistics for the latest video
-    stats_text += f'*Запись занятия 18 мая получили ({latest_video_unique_users}):*\n'
+    stats_text += f'*Запись занятия 18 мая получили ({latest_video_unique_users}):*
+'
     if latest_video_users:
         for user in latest_video_users:
             username, first_name, last_name, user_id, access_times = user
@@ -1452,13 +1494,17 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                     time_display += ')'
             else:
                 time_display = f'({access_times})'
-                
-            stats_text += f'- {user_display} {time_display}\n'
+            
+            stats_text += f'- {user_display} {time_display}
+'
     else:
-        stats_text += '- Никто еще не запрашивал эту запись\n'
+        stats_text += 'Никто еще не получил запись.
+'
     
     # Add detailed statistics for the previous video
-    stats_text += f'\n*Запись занятия 22 мая получили ({previous_video_unique_users}):*\n'
+    stats_text += f'
+*Запись занятия 22 мая получили ({previous_video_unique_users}):*
+'
     if previous_video_users:
         for user in previous_video_users:
             username, first_name, last_name, user_id, access_times = user
@@ -1490,44 +1536,17 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                     time_display += ')'
             else:
                 time_display = f'({access_times})'
-                
-            stats_text += f'- {user_display} {time_display}\n'
+            
+            stats_text += f'- {user_display} {time_display}
+'
     else:
-        stats_text += '- Никто еще не запрашивал эту запись\n'
+        stats_text += 'Никто еще не получил запись.
+'
     
-    # Убрали последние действия в отдельную команду /actions
-    
+    # Отправляем статистику
     update.message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_stats', 'admin_command')
 
-# Video access handlers
-def get_latest_video(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = user.id
-    username = user.username
-    
-    if not is_user_authorized(user_id, username):
-        update.message.reply_text(MSG_NOT_AUTHORIZED)
-        return
-    
-    conn = sqlite3.connect('filmschool.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT title, url, upload_date FROM videos ORDER BY upload_date DESC LIMIT 1")
-    video = cursor.fetchone()
-    conn.close()
-    
-    if video:
-        title, url, date = video
-        update.message.reply_text(
-            f'*{title}*\n\n'
-            f'Дата загрузки: {date}\n\n'
-            f'Ссылка: {url}',
-            parse_mode=ParseMode.MARKDOWN
-        )
-        log_action(user_id, 'get_latest_video', 'database_access')
-    else:
-        update.message.reply_text('Записи занятий пока не добавлены. Пожалуйста, попробуйте позже.')
 
 def get_previous_video(update: Update, context: CallbackContext) -> None:
     user = update.effective_user

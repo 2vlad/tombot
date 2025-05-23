@@ -1024,10 +1024,9 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
     total_admins = cursor.fetchone()[0]
     
-    # Count users who started the bot
+    # Count users who started the bot - используем все действия, не только start
     cursor.execute("""
-    SELECT COUNT(DISTINCT user_id) FROM logs 
-    WHERE action IN ('start', 'start_activated')
+    SELECT COUNT(DISTINCT user_id) FROM logs
     """)
     started_bot_count = cursor.fetchone()[0]
     
@@ -1046,37 +1045,37 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     
     # Get users who accessed the latest video with all their access timestamps
     cursor.execute("""
-    SELECT username, first_name, last_name, GROUP_CONCAT(timestamp, ', ') as access_times
+    SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
     FROM logs 
-    WHERE action = 'get_latest_video' AND username IS NOT NULL
-    GROUP BY username
+    WHERE action = 'get_latest_video'
+    GROUP BY COALESCE(username, user_id)
     ORDER BY MAX(timestamp) DESC
     """)
     latest_video_users = cursor.fetchall()
     
     # Get count of unique users who accessed the latest video
     cursor.execute("""
-    SELECT COUNT(DISTINCT username) 
+    SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
     FROM logs 
-    WHERE action = 'get_latest_video' AND username IS NOT NULL
+    WHERE action = 'get_latest_video'
     """)
     latest_video_unique_users = cursor.fetchone()[0]
     
     # Get users who accessed the previous video with all their access timestamps
     cursor.execute("""
-    SELECT username, first_name, last_name, GROUP_CONCAT(timestamp, ', ') as access_times
+    SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
     FROM logs 
-    WHERE action = 'get_previous_video' AND username IS NOT NULL
-    GROUP BY username
+    WHERE action = 'get_previous_video'
+    GROUP BY COALESCE(username, user_id)
     ORDER BY MAX(timestamp) DESC
     """)
     previous_video_users = cursor.fetchall()
     
     # Get count of unique users who accessed the previous video
     cursor.execute("""
-    SELECT COUNT(DISTINCT username) 
+    SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
     FROM logs 
-    WHERE action = 'get_previous_video' AND username IS NOT NULL
+    WHERE action = 'get_previous_video'
     """)
     previous_video_unique_users = cursor.fetchone()[0]
     
@@ -1094,14 +1093,21 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     stats_text += f'*Запись занятия 18 мая получили ({latest_video_unique_users}):*\n'
     if latest_video_users:
         for user in latest_video_users:
-            username, first_name, last_name, access_times = user
-            user_display = f'@{username}' if username else ''
+            username, first_name, last_name, user_id, access_times = user
+            # Если есть username, используем его, иначе используем user_id
+            if username:
+                user_display = f'@{username}'
+            else:
+                user_display = f'ID: {user_id}'
+                
             if first_name or last_name:
                 name = f'{first_name or ""} {last_name or ""}' .strip()
-                if user_display:
+                if username:
                     user_display += f' ({name})'
                 else:
-                    user_display = name
+                    user_display = f'{name} ({user_display})'
+            elif not username:
+                user_display = f'Пользователь {user_display}'
             
             # Format access times to show all timestamps when user accessed the video
             timestamps = access_times.split(', ')
@@ -1125,14 +1131,21 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     stats_text += f'\n*Запись занятия 22 мая получили ({previous_video_unique_users}):*\n'
     if previous_video_users:
         for user in previous_video_users:
-            username, first_name, last_name, access_times = user
-            user_display = f'@{username}' if username else ''
+            username, first_name, last_name, user_id, access_times = user
+            # Если есть username, используем его, иначе используем user_id
+            if username:
+                user_display = f'@{username}'
+            else:
+                user_display = f'ID: {user_id}'
+                
             if first_name or last_name:
                 name = f'{first_name or ""} {last_name or ""}' .strip()
-                if user_display:
+                if username:
                     user_display += f' ({name})'
                 else:
-                    user_display = name
+                    user_display = f'{name} ({user_display})'
+            elif not username:
+                user_display = f'Пользователь {user_display}'
             
             # Format access times to show all timestamps when user accessed the video
             timestamps = access_times.split(', ')

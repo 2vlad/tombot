@@ -763,10 +763,8 @@ def update_button(update: Update, context: CallbackContext) -> None:
         
         # Создаем новый текст сообщения с указанной ссылкой
         # Согласно предпочтениям пользователя, URL должен идти сразу после двоеточия
-        # Используем тройные кавычки для многострочной строки
-        message_text = f"Запись занятия: {button_url}
-
-Запись доступна в течение 7 дней."
+        # Используем явные символы новой строки вместо многострочной строки
+        message_text = "Запись занятия: " + button_url + "\n\nЗапись доступна в течение 7 дней."
         
         # Обновляем глобальные переменные в зависимости от номера кнопки
         global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS

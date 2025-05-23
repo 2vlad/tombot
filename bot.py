@@ -5,10 +5,14 @@ import logging
 import sqlite3
 import os
 import time
+import re
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, ParseMode, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
+
+# Импортируем модуль для работы с базой данных
+from db_utils import setup_database, get_db_connection, load_buttons, save_button
 
 # Настройки бота - можно легко изменять
 
@@ -48,119 +52,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Database setup
-def setup_database():
-    conn = sqlite3.connect('filmschool.db')
-    cursor = conn.cursor()
-    
-    # Create users table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        is_admin INTEGER DEFAULT 0,
-        registration_date TEXT
-    )
-    ''')
-    
-    # Create videos table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS videos (
-        id INTEGER PRIMARY KEY,
-        title TEXT,
-        url TEXT,
-        upload_date TEXT
-    )
-    ''')
-    
-    # Create logs table with additional fields for detailed statistics
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY,
-        user_id INTEGER,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        action TEXT,
-        action_data TEXT,
-        timestamp TEXT,
-        FOREIGN KEY (user_id) REFERENCES users (user_id)
-    )
-    ''')
-    
-    # Create pending_users table for users who have contacted the bot but are not yet authorized
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS pending_users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        request_date TEXT
-    )
-    ''')
-    
-    # Create buttons table to store button texts and messages
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS buttons (
-        id INTEGER PRIMARY KEY,
-        button_number INTEGER,
-        button_text TEXT,
-        message_text TEXT,
-        last_updated TEXT
-    )
-    ''')
-    
-    # Insert default admin if not exists
-    # Replace ADMIN_ID with the actual Telegram ID of the admin
-    admin_id = os.environ.get('ADMIN_ID', None)
-    if admin_id:
-        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (int(admin_id),))
-        if not cursor.fetchone():
-            now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute("INSERT INTO users (user_id, is_admin, registration_date) VALUES (?, 1, ?)", 
-                          (int(admin_id), now))
-    
-    conn.commit()
-    conn.close()
+# Функция setup_database теперь в модуле db_utils
+# Администратор также добавляется в модуле db_utils
 
 # User authentication
 def is_user_authorized(user_id, username=None):
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Проверяем по ID
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    if db_type == 'postgres':
+        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+    else:
+        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     result = cursor.fetchone()
     
     # Если не нашли по ID, но есть username, проверяем по нему
     if result is None and username:
-        cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
         result = cursor.fetchone()
     
     conn.close()
     return result is not None
 
 def is_admin(user_id):
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    
+    if db_type == 'postgres':
+        cursor.execute("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    else:
+        cursor.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    
     result = cursor.fetchone()
     conn.close()
-    return result and result[0] == 1
+    
+    if db_type == 'postgres':
+        return result and result[0] is True
+    else:
+        return result and result[0] == 1
 
-# Functions for working with button settings in the database and environment variables
+# Функция загрузки настроек кнопок
 def load_buttons_from_db():
     global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS
     
-    # First, check environment variables
+    # Сначала проверяем переменные окружения
     button1_text = os.environ.get('BUTTON1_TEXT')
     button1_message = os.environ.get('BUTTON1_MESSAGE')
     button2_text = os.environ.get('BUTTON2_TEXT')
     button2_message = os.environ.get('BUTTON2_MESSAGE')
     
-    # If environment variables are set, use them
+    # Если переменные окружения установлены, используем их
     if button1_text and button1_message:
         BUTTON_LATEST_LESSON = button1_text
         MSG_LATEST_LESSON = button1_message
@@ -173,65 +118,30 @@ def load_buttons_from_db():
         BUTTONS[2]['text'] = BUTTON_PREVIOUS_LESSON
         BUTTONS[2]['message'] = MSG_PREVIOUS_LESSON
     
-    # Then check the database
-    conn = sqlite3.connect('filmschool.db')
-    cursor = conn.cursor()
+    # Затем загружаем настройки из базы данных
+    buttons_data = load_buttons()
     
-    # Check if there are any saved buttons in the database
-    cursor.execute("SELECT COUNT(*) FROM buttons")
-    count = cursor.fetchone()[0]
+    # Обновляем глобальные переменные из загруженных данных
+    if 1 in buttons_data:
+        BUTTON_LATEST_LESSON = buttons_data[1]['text']
+        MSG_LATEST_LESSON = buttons_data[1]['message']
+        BUTTONS[1]['text'] = BUTTON_LATEST_LESSON
+        BUTTONS[1]['message'] = MSG_LATEST_LESSON
     
-    if count > 0:
-        # Load button 1 (latest lesson)
-        cursor.execute("SELECT button_text, message_text FROM buttons WHERE button_number = 1")
-        button1_data = cursor.fetchone()
-        if button1_data:
-            BUTTON_LATEST_LESSON = button1_data[0]
-            MSG_LATEST_LESSON = button1_data[1]
-            BUTTONS[1]['text'] = BUTTON_LATEST_LESSON
-            BUTTONS[1]['message'] = MSG_LATEST_LESSON
-        
-        # Load button 2 (previous lesson)
-        cursor.execute("SELECT button_text, message_text FROM buttons WHERE button_number = 2")
-        button2_data = cursor.fetchone()
-        if button2_data:
-            BUTTON_PREVIOUS_LESSON = button2_data[0]
-            MSG_PREVIOUS_LESSON = button2_data[1]
-            BUTTONS[2]['text'] = BUTTON_PREVIOUS_LESSON
-            BUTTONS[2]['message'] = MSG_PREVIOUS_LESSON
-    else:
-        # If no buttons in database, initialize with default values
+    if 2 in buttons_data:
+        BUTTON_PREVIOUS_LESSON = buttons_data[2]['text']
+        MSG_PREVIOUS_LESSON = buttons_data[2]['message']
+        BUTTONS[2]['text'] = BUTTON_PREVIOUS_LESSON
+        BUTTONS[2]['message'] = MSG_PREVIOUS_LESSON
+    
+    # Если нет данных в базе, сохраняем значения по умолчанию
+    if not buttons_data:
         save_button_to_db(1, BUTTON_LATEST_LESSON, MSG_LATEST_LESSON)
         save_button_to_db(2, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON)
-    
-    conn.close()
 
 def save_button_to_db(button_number, button_text, message_text):
-    conn = sqlite3.connect('filmschool.db')
-    cursor = conn.cursor()
-    
-    # Current timestamp
-    now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Check if button already exists
-    cursor.execute("SELECT id FROM buttons WHERE button_number = ?", (button_number,))
-    button_id = cursor.fetchone()
-    
-    if button_id:
-        # Update existing button
-        cursor.execute(
-            "UPDATE buttons SET button_text = ?, message_text = ?, last_updated = ? WHERE button_number = ?", 
-            (button_text, message_text, now, button_number)
-        )
-    else:
-        # Insert new button
-        cursor.execute(
-            "INSERT INTO buttons (button_number, button_text, message_text, last_updated) VALUES (?, ?, ?, ?)", 
-            (button_number, button_text, message_text, now)
-        )
-    
-    conn.commit()
-    conn.close()
+    # Используем функцию из модуля db_utils для сохранения настроек кнопок
+    save_button(button_number, button_text, message_text)
     
     # Также сохраняем настройки в переменные окружения для Railway
     try:
@@ -270,11 +180,15 @@ def save_button_to_db(button_number, button_text, message_text):
 
 # Log user actions with detailed information
 def log_action(user_id, action, action_data=None):
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Get user information
-    cursor.execute("SELECT username, first_name, last_name FROM users WHERE user_id = ?", (user_id,))
+    if db_type == 'postgres':
+        cursor.execute("SELECT username, first_name, last_name FROM users WHERE user_id = %s", (user_id,))
+    else:
+        cursor.execute("SELECT username, first_name, last_name FROM users WHERE user_id = ?", (user_id,))
+    
     user_info = cursor.fetchone()
     
     if user_info:
@@ -286,10 +200,16 @@ def log_action(user_id, action, action_data=None):
     now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
     
     # Insert log with detailed information
-    cursor.execute(
-        "INSERT INTO logs (user_id, username, first_name, last_name, action, action_data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-        (user_id, username, first_name, last_name, action, action_data, now)
-    )
+    if db_type == 'postgres':
+        cursor.execute(
+            "INSERT INTO logs (user_id, username, first_name, last_name, action, action_data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
+            (user_id, username, first_name, last_name, action, action_data, now)
+        )
+    else:
+        cursor.execute(
+            "INSERT INTO logs (user_id, username, first_name, last_name, action, action_data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+            (user_id, username, first_name, last_name, action, action_data, now)
+        )
     
     conn.commit()
     conn.close()
@@ -302,12 +222,16 @@ def start(update: Update, context: CallbackContext) -> None:
     first_name = user.first_name
     last_name = user.last_name
     
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Проверяем, есть ли пользователь с таким username, но с временным ID (отрицательным)
     if username:
-        cursor.execute("SELECT user_id FROM users WHERE username = ? AND user_id < 0", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE username = %s AND user_id < 0", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE username = ? AND user_id < 0", (username,))
+        
         temp_user = cursor.fetchone()
         
         if temp_user:
@@ -315,10 +239,16 @@ def start(update: Update, context: CallbackContext) -> None:
             temp_user_id = temp_user[0]
             
             # Обновляем пользователя с временным ID на реальный
-            cursor.execute(
-                "UPDATE users SET user_id = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
-                (user_id, first_name, last_name, temp_user_id)
-            )
+            if db_type == 'postgres':
+                cursor.execute(
+                    "UPDATE users SET user_id = %s, first_name = %s, last_name = %s WHERE user_id = %s", 
+                    (user_id, first_name, last_name, temp_user_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE users SET user_id = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
+                    (user_id, first_name, last_name, temp_user_id)
+                )
             conn.commit()
             
             # Теперь пользователь авторизован
@@ -338,10 +268,16 @@ def start(update: Update, context: CallbackContext) -> None:
     # Стандартная проверка авторизации
     if is_user_authorized(user_id, username) or is_admin(user_id):
         # Обновляем информацию о пользователе
-        cursor.execute(
-            "UPDATE users SET username = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
-            (username, first_name, last_name, user_id)
-        )
+        if db_type == 'postgres':
+            cursor.execute(
+                "UPDATE users SET username = %s, first_name = %s, last_name = %s WHERE user_id = %s", 
+                (username, first_name, last_name, user_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE users SET username = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
+                (username, first_name, last_name, user_id)
+            )
         conn.commit()
         
         keyboard = [
@@ -367,13 +303,25 @@ def start(update: Update, context: CallbackContext) -> None:
     else:
         # Сохраняем информацию о пользователе для возможного добавления администратором
         # Проверяем, есть ли информация о пользователе в таблице pending_users
-        cursor.execute("SELECT user_id FROM pending_users WHERE user_id = ?", (user_id,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE user_id = %s", (user_id,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE user_id = ?", (user_id,))
+            
         if not cursor.fetchone():
             # Добавляем пользователя в таблицу ожидающих
-            cursor.execute(
-                "INSERT OR REPLACE INTO pending_users (user_id, username, first_name, last_name, request_date) VALUES (?, ?, ?, ?, ?)", 
-                (user_id, username, first_name, last_name, datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S'))
-            )
+            now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+            
+            if db_type == 'postgres':
+                cursor.execute(
+                    "INSERT INTO pending_users (user_id, username, first_name, last_name, request_date) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET username = %s, first_name = %s, last_name = %s, request_date = %s", 
+                    (user_id, username, first_name, last_name, now, username, first_name, last_name, now)
+                )
+            else:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO pending_users (user_id, username, first_name, last_name, request_date) VALUES (?, ?, ?, ?, ?)", 
+                    (user_id, username, first_name, last_name, now)
+                )
             conn.commit()
         
         conn.close()
@@ -465,10 +413,14 @@ def add_user(update: Update, context: CallbackContext) -> None:
         username = user_identifier[1:]  # Убираем символ @
         
         # Проверяем, есть ли пользователь с таким именем в базе
-        conn = sqlite3.connect('filmschool.db')
+        conn, db_type = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+            
         existing_user = cursor.fetchone()
         
         if existing_user:
@@ -477,7 +429,11 @@ def add_user(update: Update, context: CallbackContext) -> None:
             return
         
         # Проверяем, есть ли пользователь в таблице pending_users
-        cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+            
         pending_user = cursor.fetchone()
         
         if pending_user:
@@ -485,7 +441,11 @@ def add_user(update: Update, context: CallbackContext) -> None:
             new_user_id = pending_user[0]
             
             # Получаем полную информацию о пользователе
-            cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users WHERE user_id = ?", (new_user_id,))
+            if db_type == 'postgres':
+                cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users WHERE user_id = %s", (new_user_id,))
+            else:
+                cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users WHERE user_id = ?", (new_user_id,))
+                
             user_data = cursor.fetchone()
             
             if user_data:
@@ -493,11 +453,18 @@ def add_user(update: Update, context: CallbackContext) -> None:
                 now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
                 
                 # Добавляем пользователя в авторизованные
-                cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (?, ?, ?, ?, ?)", 
-                              (user_id, username, first_name, last_name, now))
-                
-                # Удаляем из pending_users
-                cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (user_id,))
+                if db_type == 'postgres':
+                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (%s, %s, %s, %s, %s)", 
+                                   (user_id, username, first_name, last_name, now))
+                    
+                    # Удаляем из pending_users
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (user_id,))
+                else:
+                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (?, ?, ?, ?, ?)", 
+                                   (user_id, username, first_name, last_name, now))
+                    
+                    # Удаляем из pending_users
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (user_id,))
                 
                 conn.commit()
                 conn.close()
@@ -585,7 +552,7 @@ def add_users(update: Update, context: CallbackContext) -> None:
         return
     
     # Подключаемся к базе данных
-    conn = sqlite3.connect(get_db_path())
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Статистика добавления
@@ -597,7 +564,11 @@ def add_users(update: Update, context: CallbackContext) -> None:
     # Проходим по всем никнеймам
     for username in clean_usernames:
         # Проверяем, есть ли пользователь в таблице pending_users
-        cursor.execute("SELECT user_id, username FROM pending_users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, username FROM pending_users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id, username FROM pending_users WHERE username = ?", (username,))
+            
         pending_user = cursor.fetchone()
         
         if pending_user:
@@ -605,19 +576,33 @@ def add_users(update: Update, context: CallbackContext) -> None:
             pending_user_id, pending_username = pending_user
             
             # Проверяем, не существует ли уже такой пользователь в таблице users
-            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (pending_user_id,))
+            if db_type == 'postgres':
+                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_user_id,))
+            else:
+                cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (pending_user_id,))
+                
             existing_user = cursor.fetchone()
             
             if not existing_user:
                 # Добавляем пользователя в таблицу users
                 now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
-                cursor.execute(
-                    "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (?, ?, ?, ?)", 
-                    (pending_user_id, username, now, 0)
-                )
                 
-                # Удаляем из ожидающих
-                cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (pending_user_id,))
+                if db_type == 'postgres':
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (%s, %s, %s, %s)", 
+                        (pending_user_id, username, now, False)
+                    )
+                    
+                    # Удаляем из ожидающих
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (pending_user_id,))
+                else:
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (?, ?, ?, ?)", 
+                        (pending_user_id, username, now, 0)
+                    )
+                    
+                    # Удаляем из ожидающих
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (pending_user_id,))
                 
                 added_count += 1
                 log_action(user_id, 'add_user', f'username:@{username}, user_id:{pending_user_id}')
@@ -657,7 +642,7 @@ def remove_user(update: Update, context: CallbackContext) -> None:
     
     user_identifier = context.args[0]
     
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Определяем, является ли идентификатор числом (ID) или именем пользователя
@@ -671,13 +656,21 @@ def remove_user(update: Update, context: CallbackContext) -> None:
             conn.close()
             return
         
-        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (remove_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (remove_user_id,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (remove_user_id,))
+            
         if not cursor.fetchone():
             update.message.reply_text(f'Пользователь с ID {remove_user_id} не найден.')
             conn.close()
             return
         
-        cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (remove_user_id,))
+        else:
+            cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
+            
         conn.commit()
         conn.close()
         
@@ -689,7 +682,11 @@ def remove_user(update: Update, context: CallbackContext) -> None:
         username = user_identifier[1:]  # Убираем символ @
         
         # Находим пользователя по имени
-        cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+            
         user_data = cursor.fetchone()
         
         if not user_data:
@@ -700,12 +697,20 @@ def remove_user(update: Update, context: CallbackContext) -> None:
         remove_user_id, is_admin_flag = user_data
         
         # Проверяем, является ли пользователь администратором
-        if is_admin_flag == 1:
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
             update.message.reply_text('Невозможно удалить администратора.')
             conn.close()
             return
         
-        cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (remove_user_id,))
+        else:
+            cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
         conn.commit()
         conn.close()
         
@@ -1115,18 +1120,23 @@ def handle_message(update: Update, context: CallbackContext) -> None:
     
     text = update.message.text
     
-    # Используем словарь BUTTONS для обработки нажатий на кнопки
-    if text == BUTTONS[1]['text']:
+    # Загружаем актуальные настройки кнопок из базы данных
+    buttons_data = load_buttons()
+    
+    # Проверяем нажатие на кнопку 1 (последнее занятие)
+    if text == BUTTON_LATEST_LESSON:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(BUTTONS[1]['message'], parse_mode=ParseMode.MARKDOWN)
+        update.message.reply_text(MSG_LATEST_LESSON, parse_mode=ParseMode.MARKDOWN)
         # Расширенное логирование с данными о кнопке
-        log_action(user_id, 'get_latest_video', BUTTONS[1]['text'])
-    elif text == BUTTONS[2]['text']:
+        log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
+    # Проверяем нажатие на кнопку 2 (предыдущее занятие)
+    elif text == BUTTON_PREVIOUS_LESSON:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(BUTTONS[2]['message'], parse_mode=ParseMode.MARKDOWN)
+        update.message.reply_text(MSG_PREVIOUS_LESSON, parse_mode=ParseMode.MARKDOWN)
         # Расширенное логирование с данными о кнопке
-        log_action(user_id, 'get_previous_video', BUTTONS[2]['text'])
-    elif text == BUTTONS[3]['text']:
+        log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
+    # Проверяем нажатие на кнопку "Обновить"
+    elif text == BUTTON_REFRESH:
         # Если нажата кнопка "Обновить", вызываем функцию refresh_keyboard
         refresh_keyboard(update, context)
         log_action(user_id, 'refresh_keyboard_button', 'button_click')
@@ -1237,7 +1247,7 @@ def make_admin(update: Update, context: CallbackContext) -> None:
         return
     
     user_identifier = context.args[0]
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Определяем, является ли идентификатор числом (ID) или именем пользователя
@@ -1246,7 +1256,11 @@ def make_admin(update: Update, context: CallbackContext) -> None:
         target_user_id = int(user_identifier)
         
         # Проверяем, существует ли пользователь с таким ID
-        cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = ?", (target_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = ?", (target_user_id,))
+            
         user_data = cursor.fetchone()
         
         if not user_data:
@@ -1257,13 +1271,21 @@ def make_admin(update: Update, context: CallbackContext) -> None:
         user_id, username, is_admin_flag = user_data
         
         # Проверяем, не является ли пользователь уже администратором
-        if is_admin_flag == 1:
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
             update.message.reply_text(f'Пользователь с ID {target_user_id} уже является администратором.')
             conn.close()
             return
         
         # Делаем пользователя администратором
-        cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
         conn.commit()
         
         username_str = f'@{username}' if username else ''
@@ -1280,8 +1302,12 @@ def make_admin(update: Update, context: CallbackContext) -> None:
         # Если это @username
         username = user_identifier[1:]  # Убираем символ @
         
-        # Проверяем, существует ли пользователь с таким username
-        cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+        # Находим пользователя по имени
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+            
         user_data = cursor.fetchone()
         
         if not user_data:
@@ -1292,13 +1318,21 @@ def make_admin(update: Update, context: CallbackContext) -> None:
         target_user_id, is_admin_flag = user_data
         
         # Проверяем, не является ли пользователь уже администратором
-        if is_admin_flag == 1:
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
             update.message.reply_text(f'Пользователь @{username} уже является администратором.')
             conn.close()
             return
         
         # Делаем пользователя администратором
-        cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
         conn.commit()
         
         # Создаем сообщение о назначении администратором

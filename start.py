@@ -5,33 +5,42 @@ import os
 import subprocess
 import sys
 
-# u0417u0430u043fu0443u0441u043au0430u0435u043c u0441u043au0440u0438u043fu0442 u043du0430u0441u0442u0440u043eu0439u043au0438 u0431u0430u0437u044b u0434u0430u043du043du044bu0445
-print("u041du0430u0441u0442u0440u0430u0438u0432u0430u0435u043c u0431u0430u0437u0443 u0434u0430u043du043du044bu0445...")
+# Запускаем скрипт настройки базы данных
+print("Настраиваем базу данных...")
 try:
     import db_setup
     db_setup.setup_database()
-    print("u0411u0430u0437u0430 u0434u0430u043du043du044bu0445 u0443u0441u043fu0435u0448u043du043e u043du0430u0441u0442u0440u043eu0435u043du0430!")
+    print("База данных успешно настроена!")
 except Exception as e:
-    print(f"u041eu0448u0438u0431u043au0430 u043fu0440u0438 u043du0430u0441u0442u0440u043eu0439u043au0435 u0431u0430u0437u044b u0434u0430u043du043du044bu0445: {e}")
+    print(f"Ошибка при настройке базы данных: {e}")
     sys.exit(1)
 
-# u0417u0430u043fu0443u0441u043au0430u0435u043c u0431u043eu0442
-print("u0417u0430u043fu0443u0441u043au0430u0435u043c u0431u043eu0442...")
+# Запускаем скрипт исправления базы данных для Railway
+print("Запускаем исправление базы данных для Railway...")
 try:
-    # u041fu0440u043eu0432u0435u0440u044fu0435u043c u043du0430u043bu0438u0447u0438u0435 u043du0435u043eu0431u0445u043eu0434u0438u043cu044bu0445 u043fu0435u0440u0435u043cu0435u043du043du044bu0445 u043eu043au0440u0443u0436u0435u043du0438u044f
+    import railway_fix
+    print("Исправление базы данных для Railway завершено!")
+except Exception as e:
+    print(f"Ошибка при исправлении базы данных для Railway: {e}")
+    # Продолжаем выполнение, даже если возникла ошибка
+
+# Запускаем бот
+print("Запускаем бот...")
+try:
+    # Проверяем наличие необходимых переменных окружения
     telegram_token = os.environ.get('TELEGRAM_TOKEN')
     admin_id = os.environ.get('ADMIN_ID')
     
     if not telegram_token:
-        print("u041eu0448u0438u0431u043au0430: u041du0435 u0443u043au0430u0437u0430u043d u0442u043eu043au0435u043d Telegram (TELEGRAM_TOKEN)")
+        print("Ошибка: Не указан токен Telegram (TELEGRAM_TOKEN)")
         sys.exit(1)
     
     if not admin_id:
-        print("u041fu0440u0435u0434u0443u043fu0440u0435u0436u0434u0435u043du0438u0435: u041du0435 u0443u043au0430u0437u0430u043d ID u0430u0434u043cu0438u043du0438u0441u0442u0440u0430u0442u043eu0440u0430 (ADMIN_ID)")
+        print("Предупреждение: Не указан ID администратора (ADMIN_ID)")
     
-    # u0417u0430u043fu0443u0441u043au0430u0435u043c u0431u043eu0442
+    # Запускаем бот
     subprocess.run([sys.executable, "bot.py"])
     
 except Exception as e:
-    print(f"u041eu0448u0438u0431u043au0430 u043fu0440u0438 u0437u0430u043fu0443u0441u043au0435 u0431u043eu0442u0430: {e}")
+    print(f"Ошибка при запуске бота: {e}")
     sys.exit(1)

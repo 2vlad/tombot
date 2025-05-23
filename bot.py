@@ -385,6 +385,7 @@ def help_command(update: Update, context: CallbackContext) -> None:
                 '/adduser <user_id> - Добавить пользователя по ID\n'
                 '/addusers @user1 @user2 ... - Массовое добавление пользователей по никнеймам\n'
                 '/checkusers @user1 @user2 ... - Проверить наличие пользователей в базе данных\n'
+                '/diagnosedb - Диагностика базы данных\n'
                 '/removeuser <user_id> - Удалить пользователя по ID\n'
                 '/makeadmin <user_id или @username> - Назначить пользователя администратором\n'
                 '/button1 "Текст кнопки" "URL" - Обновить текст и ссылку для кнопки 1\n'
@@ -1022,6 +1023,111 @@ def show_actions(update: Update, context: CallbackContext) -> None:
     
     update.message.reply_text(actions_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_actions', 'admin_command')
+
+def diagnose_db(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Подключаемся к базе данных
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Получаем информацию о таблицах
+    if db_type == 'postgres':
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    else:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    
+    tables = cursor.fetchall()
+    table_names = [table[0] for table in tables]
+    
+    # Получаем информацию о структуре таблицы users
+    if 'users' in table_names:
+        if db_type == 'postgres':
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")
+        else:
+            cursor.execute("PRAGMA table_info(users)")
+            
+        columns_info = cursor.fetchall()
+        
+        if db_type == 'postgres':
+            columns = [col[0] for col in columns_info]
+        else:
+            columns = [col[1] for col in columns_info]  # SQLite returns (id, name, type, notnull, default, pk)
+        
+        # Проверяем наличие колонки username
+        has_username_column = 'username' in columns
+        
+        # Получаем количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM users")
+        users_count = cursor.fetchone()[0]
+        
+        # Получаем первых 5 пользователей
+        cursor.execute("SELECT user_id, username FROM users LIMIT 5")
+        sample_users = cursor.fetchall()
+    else:
+        has_username_column = False
+        users_count = 0
+        sample_users = []
+    
+    # Получаем информацию о структуре таблицы pending_users
+    if 'pending_users' in table_names:
+        if db_type == 'postgres':
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'pending_users'")
+        else:
+            cursor.execute("PRAGMA table_info(pending_users)")
+            
+        columns_info = cursor.fetchall()
+        
+        if db_type == 'postgres':
+            pending_columns = [col[0] for col in columns_info]
+        else:
+            pending_columns = [col[1] for col in columns_info]  # SQLite returns (id, name, type, notnull, default, pk)
+        
+        # Проверяем наличие колонки username
+        has_pending_username_column = 'username' in pending_columns
+        
+        # Получаем количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM pending_users")
+        pending_users_count = cursor.fetchone()[0]
+    else:
+        has_pending_username_column = False
+        pending_users_count = 0
+    
+    conn.close()
+    
+    # Формируем отчет
+    report = f"*Диагностика базы данных:*\n\n"
+    report += f"Тип базы данных: {db_type}\n"
+    report += f"Таблицы в базе: {', '.join(table_names)}\n\n"
+    
+    if 'users' in table_names:
+        report += f"*Таблица users:*\n"
+        report += f"Колонки: {', '.join(columns)}\n"
+        report += f"Колонка username: {'Есть' if has_username_column else 'Отсутствует'}\n"
+        report += f"Количество пользователей: {users_count}\n"
+        
+        if sample_users:
+            report += "\nПримеры пользователей:\n"
+            for user in sample_users:
+                user_id, username = user
+                report += f"- ID: {user_id}, Username: {username or 'Нет'}\n"
+    else:
+        report += "*Таблица users не найдена*\n"
+    
+    if 'pending_users' in table_names:
+        report += f"\n*Таблица pending_users:*\n"
+        report += f"Колонки: {', '.join(pending_columns)}\n"
+        report += f"Колонка username: {'Есть' if has_pending_username_column else 'Отсутствует'}\n"
+        report += f"Количество пользователей: {pending_users_count}\n"
+    else:
+        report += "\n*Таблица pending_users не найдена*\n"
+    
+    update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'diagnose_db', 'admin_command')
 
 def check_users(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -1682,6 +1788,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("listusers", list_users))
     dispatcher.add_handler(CommandHandler("users", list_users))
     dispatcher.add_handler(CommandHandler("checkusers", check_users))
+    dispatcher.add_handler(CommandHandler("diagnosedb", diagnose_db))
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
     dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
     

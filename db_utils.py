@@ -123,9 +123,9 @@ def setup_database():
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS buttons (
             id SERIAL PRIMARY KEY,
-            button_number INTEGER,
-            button_text TEXT,
-            message_text TEXT,
+            button_key VARCHAR(255) UNIQUE,
+            button_text VARCHAR(255),
+            button_url TEXT,
             last_updated TIMESTAMP
         )
         """)
@@ -172,10 +172,10 @@ def setup_database():
         # Таблица кнопок
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS buttons (
-            id INTEGER PRIMARY KEY,
-            button_number INTEGER,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            button_key TEXT UNIQUE,
             button_text TEXT,
-            message_text TEXT,
+            button_url TEXT,
             last_updated TEXT
         )
         """)
@@ -208,28 +208,25 @@ def load_buttons():
     buttons = {}
     
     # Проверяем, есть ли кнопки в базе данных
-    if db_type == DB_TYPE_POSTGRES:
-        cursor.execute("SELECT COUNT(*) FROM buttons")
-    else:
-        cursor.execute("SELECT COUNT(*) FROM buttons")
-    
-    count = cursor.fetchone()[0]
-    
-    if count > 0:
-        # Загружаем настройки кнопок
+    try:
         if db_type == DB_TYPE_POSTGRES:
-            cursor.execute("SELECT button_number, button_text, message_text FROM buttons")
+            cursor.execute("SELECT button_key, button_text, button_url FROM buttons")
         else:
-            cursor.execute("SELECT button_number, button_text, message_text FROM buttons")
+            cursor.execute("SELECT button_key, button_text, button_url FROM buttons")
         
         for row in cursor.fetchall():
-            button_number, button_text, message_text = row
-            buttons[button_number] = {'text': button_text, 'message': message_text}
+            button_key, button_text, button_url = row
+            # Преобразуем button_key в номер кнопки (например, 'button1' -> 1)
+            if button_key.startswith('button') and button_key[6:].isdigit():
+                button_number = int(button_key[6:])
+                buttons[button_number] = {'text': button_text, 'message': button_url}
+    except Exception as e:
+        print(f"Error loading buttons: {e}")
     
     conn.close()
     return buttons
 
-def save_button(button_number, button_text, message_text):
+def save_button(button_number, button_text, button_url):
     """
     Сохраняет настройки кнопки в базу данных.
     """
@@ -242,20 +239,20 @@ def save_button(button_number, button_text, message_text):
         now = "NOW()"
         
         # Проверяем, существует ли кнопка
-        cursor.execute("SELECT id FROM buttons WHERE button_number = %s", (button_number,))
+        cursor.execute("SELECT id FROM buttons WHERE button_key = %s", (f'button{button_number}',))
         button_id = cursor.fetchone()
         
         if button_id:
             # Обновляем существующую кнопку
             cursor.execute(
-                "UPDATE buttons SET button_text = %s, message_text = %s, last_updated = " + now + " WHERE button_number = %s",
-                (button_text, message_text, button_number)
+                "UPDATE buttons SET button_text = %s, button_url = %s, last_updated = " + now + " WHERE button_key = %s",
+                (button_text, button_url, f'button{button_number}')
             )
         else:
             # Вставляем новую кнопку
             cursor.execute(
-                "INSERT INTO buttons (button_number, button_text, message_text, last_updated) VALUES (%s, %s, %s, " + now + ")",
-                (button_number, button_text, message_text)
+                "INSERT INTO buttons (button_key, button_text, button_url, last_updated) VALUES (%s, %s, %s, " + now + ")",
+                (f'button{button_number}', button_text, button_url)
             )
     else:
         # SQLite использует datetime('now') для текущей даты и времени
@@ -264,20 +261,20 @@ def save_button(button_number, button_text, message_text):
         now = datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
         
         # Проверяем, существует ли кнопка
-        cursor.execute("SELECT id FROM buttons WHERE button_number = ?", (button_number,))
+        cursor.execute("SELECT id FROM buttons WHERE button_key = ?", (f'button{button_number}',))
         button_id = cursor.fetchone()
         
         if button_id:
             # Обновляем существующую кнопку
             cursor.execute(
-                "UPDATE buttons SET button_text = ?, message_text = ?, last_updated = ? WHERE button_number = ?",
-                (button_text, message_text, now, button_number)
+                "UPDATE buttons SET button_text = ?, button_url = ?, last_updated = ? WHERE button_key = ?",
+                (button_text, button_url, now, f'button{button_number}')
             )
         else:
             # Вставляем новую кнопку
             cursor.execute(
-                "INSERT INTO buttons (button_number, button_text, message_text, last_updated) VALUES (?, ?, ?, ?)",
-                (button_number, button_text, message_text, now)
+                "INSERT INTO buttons (button_key, button_text, button_url, last_updated) VALUES (?, ?, ?, ?)",
+                (f'button{button_number}', button_text, button_url, now)
             )
     
     conn.commit()

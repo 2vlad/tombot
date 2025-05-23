@@ -762,9 +762,10 @@ def update_button(update: Update, context: CallbackContext) -> None:
         button_url = matches[1]
         
         # Создаем новый текст сообщения с указанной ссылкой
-        message_text = f'''Запись занятия: {button_url}
+        # Форматируем ссылку так, чтобы она шла сразу после двоеточия
+        message_text = f'Запись занятия: {button_url}
 
-Запись доступна в течение 7 дней.'''
+Запись доступна в течение 7 дней.'
         
         # Обновляем глобальные переменные в зависимости от номера кнопки
         global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS
@@ -1126,13 +1127,15 @@ def handle_message(update: Update, context: CallbackContext) -> None:
     # Проверяем нажатие на кнопку 1 (последнее занятие)
     if text == BUTTON_LATEST_LESSON:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(MSG_LATEST_LESSON, parse_mode=ParseMode.MARKDOWN)
+        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
+        update.message.reply_text(MSG_LATEST_LESSON)
         # Расширенное логирование с данными о кнопке
         log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
     # Проверяем нажатие на кнопку 2 (предыдущее занятие)
     elif text == BUTTON_PREVIOUS_LESSON:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(MSG_PREVIOUS_LESSON, parse_mode=ParseMode.MARKDOWN)
+        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
+        update.message.reply_text(MSG_PREVIOUS_LESSON)
         # Расширенное логирование с данными о кнопке
         log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
     # Проверяем нажатие на кнопку "Обновить"

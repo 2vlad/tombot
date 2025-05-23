@@ -11,13 +11,49 @@ import random
 
 # u0421u043fu0438u0441u043eu043a u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439 u0434u043bu044f u0434u043eu0431u0430u0432u043bu0435u043du0438u044f
 USERS_TO_ADD = [
-    'nastyaglukhikh',
-    'sebastianbach',
-    'valerigeb',
-    'jchvanova',
-    'mabublik',
-    'nikitafateev',
-    'oxanatimchenko'
+    'nastyaglukhikh', 'Sebastianbachh', 'valerigeb', 'JChvanova', 'mabublik', 'Nikita_Fateev', 'batullina',
+    'alexandra_andronova', 'anya_tbd', 'hallelujahhhhh', 'Kisl_Yar', 'ilpilipenko', 'kama_asimi',
+    'dannaafaunova', 'balabanov1994', 'ilyabrumm', 'AlinaPiramida', 'vikatripaipi', 'vforvitalia',
+    'okolokrishna', 'dhdjswjwkwkk', 'sasha_salman', 'Hlidarfjall', 'mashaogai', 'Polasobackina',
+    'dovolnoo', 'gumieri', 'bottomby', 'mika_sogoian', 'ttaknado', 'sofa_yurova', 'plessenka',
+    'leonid3d', 'K_reeal', 'sssh1zuka', 'Polpoltora', 'oxanatimchenko', 'koolfield', 'fjrraerb',
+    'yoaiany', 'AHMouse', 'varyary', 'sanches1611', 'dashalikhaia', 'maria_karateeva',
+    'anisimov_alexander', 'Howdthathappenn', 'wwwserge', 'mojoimages', 'VitaBa', 'Igorushnitskiy',
+    'vasilisabrazhnik', 'vpodbeltseva', 'karolina_mo', 'leranespi', 'azi_dark', 'deldelwa',
+    'polllga', 'is_land_er', 'yourka_kaminsky', 'nnnn_1001', 'egorblin', 'liubouvpetrich',
+    'avrieoiker', 'nikitamiklushov', 'AnyaBerkova', 'vigoribame', 'evgeny_renia', 'pierrecassette',
+    'alena__alelia', 'fedya_gerlein', 'lizalzrv', 'ohhmymovie', 'tanya_holt', 'mapiiiiiie',
+    'Philipp_Mohov', 'svetlaelita', 'teyesnl', 'dlkcfjfieipuk', 'Konstantin_I', 'yy0op',
+    'NBG7777', 'Leeenah', 'AnnaBialko', 'ElinaDamirovna28', 'gevvvorg', 'son_of_water',
+    'julianna_guzun', 'olaafan', 'maryzhek', 'kinemantra', 'tovlad', 'crystal_sher', 'amir_mussae',
+    'buntmetalldiebe', 'anyavidela', 'sinefilmmm', 'Takoe_imya_zanyato_ups_ups', 'ya_omut',
+    'greggorygorbov', 'not_anton_dolin', 'olfedorova', 'ogar671films', 'Ismail', 'Safarali',
+    'mariecroissant', 'anastasia_gospodin_nikto', 'curlysalwaa', 'mumofgeniuses', 'demyanovam',
+    'qwerty1qwerty2', 'mariabolgova', 'lizakashintseva', 'egorveer', 'asiia_gabdullina',
+    'markusberli', 'reni_orlavrelizatimofee', 'albumoves', 'Artur_Bondarenko', 'nyutaannette',
+    'ShigoHenka', 'pureblind', 'ufolga', 'fakenymph', 'gorkunvaleria', 'vladaplatonova',
+    'we_working', 'veitviRaya_Shmatova', 'NataBochkova', 'xlopoklox', 'chesnokovina', 'grisha_mzrv',
+    'ksch57', 'sashakh', 'xadiza', 'ecsynth', 'dimaionov', 'fayyna', 'mythsofellad',
+    'any_anyavseykralimoeimyaSaavelyyaedada', 'AnstyL', 'olkhonrave', 'Rinatata', 'am_solovyeva',
+    'respectfortheinsane', 'eaielm', 'ostrovskaia_lalala', 'stesha_pet', 'superficialperson',
+    'proskuryak', 'mosher_cat', 'Irin21', 'jehoom', 'badjackovichlizacapriza', 'ignni_s',
+    'koollesh', 'Ninakartina999', 'RUSLAN1780', 'imgena', 'ag_ostapenko', 'who19',
+    'badjackovichdaniil_khalipov', 'DanilaShangin', 'nastyaz1234', 'sonmmm', 'elio_st',
+    'plug_rec', 'anjitaratuta', 'Dina_Yangirova', 'firlifepoltosnevernualeks_hod', 'kdedier',
+    'natt_0_0katyaktpionnidi', 'extraordinary_nastia', 'K1rt0fansashabizz', 'oh_jugend',
+    'anidisherevmenshov99', 'Mon_Cher_sower', 'Vosem108vladaamaksimova', 'elizatimofee',
+    'dash_kash', 'eremivl', 'Anna_Ivanch', 'Kuskovaelen', 'xeniyayoutjelinabaniode',
+    'DariaOmelchenkoMasha_Mondanya_lepeshin', 'arctiqfox', 'kknick', 'mmhlova', 'v_tsyganova',
+    'snvandal', 'enscausa', 'weefolkooezhik_v_tumane', 'vladofilm', 'n0yoka', 'ieieieieieieieiei'
+]
+
+# Телефонные номера (будут добавлены как имена пользователей)
+PHONE_NUMBERS = [
+    '+4915141401784',
+    '+79652981717',
+    '+89523917366',
+    '+79184030505',
+    '+995555717121'
 ]
 
 def direct_add_users_to_railway(database_url, users):
@@ -133,8 +169,11 @@ def main():
     else:
         database_url = input("u0412u0432u0435u0434u0438u0442u0435 u0441u0442u0440u043eu043au0443 u043fu043eu0434u043au043bu044eu0447u0435u043du0438u044f u043a u0431u0430u0437u0435 u0434u0430u043du043du044bu0445 PostgreSQL u043du0430 Railway: ")
     
-    # u041fu043eu043bu0443u0447u0430u0435u043c u0441u043fu0438u0441u043eu043a u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439
-    users = USERS_TO_ADD
+    # u041eu0431u044au0435u0434u0438u043du044fu0435u043c u0441u043fu0438u0441u043eu043a u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439 u0438 u0442u0435u043bu0435u0444u043eu043du043du044bu0435 u043du043eu043cu0435u0440u0430
+    users = USERS_TO_ADD + PHONE_NUMBERS
+    
+    print(f"Вu0441u0435u0433u043e u0431u0443u0434u0435u0442 u0434u043eu0431u0430u0432u043bu0435u043du043e {len(users)} u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439
+")
     
     # u0414u043eu0431u0430u0432u043bu044fu0435u043c u043fu043eu043bu044cu0437u043eu0432u0430u0442u0435u043bu0435u0439
     direct_add_users_to_railway(database_url, users)

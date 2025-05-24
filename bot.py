@@ -1370,30 +1370,19 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         conn.close()
         
         # Format basic statistics with simple string concatenation
-        stats_text = "*Статистика бота*
-
-"
-        stats_text += "Всего пользователей: " + str(total_users) + "
-"
-        stats_text += "Запустили бота: " + str(len(active_users)) + "
-"
-        stats_text += "Администраторов: " + str(total_admins) + "
-
-"
+        stats_text = "*Статистика бота*" + "\n\n"
+        stats_text += "Всего пользователей: " + str(total_users) + "\n"
+        stats_text += "Запустили бота: " + str(len(active_users)) + "\n"
+        stats_text += "Администраторов: " + str(total_admins) + "\n\n"
         
         # If there are users who were added but didn't start the bot
         inactive_users = total_users - len(active_users)
         if inactive_users > 0:
-            stats_text += "Добавлено, но не запустили бота: " + str(inactive_users) + "
-
-"
+            stats_text += "Добавлено, но не запустили бота: " + str(inactive_users) + "\n\n"
         
         # Add simplified statistics for videos
-        stats_text += "*Запись занятия 18 мая получили: " + str(latest_video_unique_users) + "*
-
-"
-        stats_text += "*Запись занятия 22 мая получили: " + str(previous_video_unique_users) + "*
-"
+        stats_text += "*Запись занятия 18 мая получили: " + str(latest_video_unique_users) + "*\n\n"
+        stats_text += "*Запись занятия 22 мая получили: " + str(previous_video_unique_users) + "*\n"
         
         # Send statistics
         update.message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
@@ -1402,7 +1391,6 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         error_message = "Ошибка при получении статистики: " + str(e)
         update.message.reply_text(error_message)
         print("Error in show_stats: " + str(e))
-
 
 def get_previous_video(update: Update, context: CallbackContext) -> None:
     user = update.effective_user

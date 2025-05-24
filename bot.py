@@ -1444,27 +1444,27 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     conn.close()
     
     # Format basic statistics
-    stats_text = "*Статистика бота*
+    stats_text = """*Статистика бота*
 
-"
-    stats_text += f"Всего пользователей: {total_users}
-"
-    stats_text += f"Запустили бота: {len(active_users)}
-"
-    stats_text += f"Администраторов: {total_admins}
+"""
+    stats_text += f"""Всего пользователей: {total_users}
+"""
+    stats_text += f"""Запустили бота: {len(active_users)}
+"""
+    stats_text += f"""Администраторов: {total_admins}
 
-"
+"""
     
     # If there are users who were added but didn't start the bot
     inactive_users = total_users - len(active_users)
     if inactive_users > 0:
-        stats_text += f"Добавлено, но не запустили бота: {inactive_users}
+        stats_text += f"""Добавлено, но не запустили бота: {inactive_users}
 
-"
+"""
     
     # Add detailed statistics for the latest video
-    stats_text += f"*Запись занятия 18 мая получили ({latest_video_unique_users}):*
-"
+    stats_text += f"""*Запись занятия 18 мая получили ({latest_video_unique_users}):*
+"""
     if latest_video_users:
         for user in latest_video_users:
             username, first_name, last_name, user_id, access_times = user
@@ -1497,16 +1497,16 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             else:
                 time_display = f"({access_times})"
             
-            stats_text += f"- {user_display} {time_display}
-"
+            stats_text += f"""- {user_display} {time_display}
+"""
     else:
-        stats_text += "Никто еще не получил запись.
-"
+        stats_text += """Никто еще не получил запись.
+"""
     
     # Add detailed statistics for the previous video
-    stats_text += f"
+    stats_text += f"""
 *Запись занятия 22 мая получили ({previous_video_unique_users}):*
-"
+"""
     if previous_video_users:
         for user in previous_video_users:
             username, first_name, last_name, user_id, access_times = user
@@ -1539,11 +1539,11 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             else:
                 time_display = f"({access_times})"
             
-            stats_text += f"- {user_display} {time_display}
-"
+            stats_text += f"""- {user_display} {time_display}
+"""
     else:
-        stats_text += "Никто еще не получил запись.
-"
+        stats_text += """Никто еще не получил запись.
+"""
     
     # Send statistics
     update.message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)

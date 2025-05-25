@@ -1453,6 +1453,32 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         
         video_actions = cursor.fetchall()
         
+        # Дополнительно получаем информацию о нажатиях на кнопки с конкретными датами
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT action, COUNT(DISTINCT user_id) as count
+                FROM logs
+                WHERE action LIKE 'get_video_%'
+                GROUP BY action
+                ORDER BY action
+            """)
+        else:
+            cursor.execute("""
+                SELECT action, COUNT(DISTINCT user_id) as count
+                FROM logs
+                WHERE action LIKE 'get_video_%'
+                GROUP BY action
+                ORDER BY action
+            """)
+        
+        date_specific_actions = cursor.fetchall()
+        
+        # Добавляем дата-специфичные действия в общий список
+        for action, count in date_specific_actions:
+            # Проверяем, есть ли уже такое действие в списке
+            if action not in [a for a, _ in video_actions]:
+                video_actions.append((action, count))
+        
         # Получаем информацию о датах занятий из базы данных или из логов
         # Сначала проверим, есть ли таблица videos
         video_dates = {}
@@ -1493,6 +1519,9 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             # Определяем дату занятия
             if action in video_dates:
                 date = video_dates[action]
+            elif action.startswith('get_video_'):
+                # Извлекаем дату из действия вида get_video_25 мая
+                date = action.replace('get_video_', '')
             else:
                 # Если дата неизвестна, используем название действия
                 date = action.replace('get_', '').replace('_video', '').replace('video_', '')
@@ -1606,15 +1635,29 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         # Используем индивидуальный текст сообщения для этой кнопки
         # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
         update.message.reply_text(MSG_LATEST_LESSON)
-        # Расширенное логирование с данными о кнопке
-        log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
+        # Извлекаем дату из текста кнопки
+        date_match = re.search(r'\d{1,2} \w+', BUTTON_LATEST_LESSON)
+        if date_match:
+            lesson_date = date_match.group(0)
+            # Логируем с указанием конкретной даты
+            log_action(user_id, f'get_video_{lesson_date}', BUTTON_LATEST_LESSON)
+        else:
+            # Если не удалось извлечь дату, используем стандартное логирование
+            log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
     # Проверяем нажатие на кнопку 2 (предыдущее занятие)
     elif text == BUTTON_PREVIOUS_LESSON:
         # Используем индивидуальный текст сообщения для этой кнопки
         # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
         update.message.reply_text(MSG_PREVIOUS_LESSON)
-        # Расширенное логирование с данными о кнопке
-        log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
+        # Извлекаем дату из текста кнопки
+        date_match = re.search(r'\d{1,2} \w+', BUTTON_PREVIOUS_LESSON)
+        if date_match:
+            lesson_date = date_match.group(0)
+            # Логируем с указанием конкретной даты
+            log_action(user_id, f'get_video_{lesson_date}', BUTTON_PREVIOUS_LESSON)
+        else:
+            # Если не удалось извлечь дату, используем стандартное логирование
+            log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
     # Проверяем нажатие на кнопку "Обновить"
     elif text == BUTTON_REFRESH:
         # Если нажата кнопка "Обновить", вызываем функцию refresh_keyboard

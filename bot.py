@@ -1736,15 +1736,20 @@ def show_user_lists(update: Update, context: CallbackContext) -> None:
         conn, db_type = get_db_connection()
         cursor = conn.cursor()
         
-        # Get list of administrators
+        # Get list of administrators with all fields
         if db_type == 'postgres':
-            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = TRUE ORDER BY username")
+            cursor.execute("SELECT username, user_id, first_name, last_name FROM users WHERE is_admin = TRUE ORDER BY username")
         else:
-            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = 1 ORDER BY username")
+            cursor.execute("SELECT username, user_id, first_name, last_name FROM users WHERE is_admin = 1 ORDER BY username")
         admins_list = cursor.fetchall()
         
         # Get list of users who started the bot
-        cursor.execute("SELECT DISTINCT u.username, l.user_id FROM logs l JOIN users u ON l.user_id = u.user_id ORDER BY u.username")
+        cursor.execute("""
+            SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
+            FROM logs l 
+            JOIN users u ON l.user_id = u.user_id 
+            ORDER BY COALESCE(u.username, u.first_name, '')
+        """)
         active_users = cursor.fetchall()
         
         conn.close()
@@ -1755,16 +1760,28 @@ def show_user_lists(update: Update, context: CallbackContext) -> None:
         # Add list of administrators
         message_text += "Администраторы:\n"
         for admin in admins_list:
-            username, admin_id = admin
-            admin_display = "@" + username if username else "ID: " + str(admin_id)
+            username, admin_id, first_name, last_name = admin
+            # Формируем отображаемое имя администратора, используя доступную информацию
+            if username:
+                admin_display = "@" + username
+            elif first_name:
+                admin_display = first_name + (" " + last_name if last_name else "") + f" (ID: {admin_id})"
+            else:
+                admin_display = "ID: " + str(admin_id)
             message_text += "- " + admin_display + "\n"
         message_text += "\n"
         
         # Add list of active users
         message_text += "Пользователи, запустившие бота:\n"
         for user in active_users:
-            username, user_id = user
-            user_display = "@" + username if username else "ID: " + str(user_id)
+            username, user_id, first_name, last_name = user
+            # Формируем отображаемое имя пользователя, используя доступную информацию
+            if username:
+                user_display = "@" + username
+            elif first_name:
+                user_display = first_name + (" " + last_name if last_name else "") + f" (ID: {user_id})"
+            else:
+                user_display = "ID: " + str(user_id)
             message_text += "- " + user_display + "\n"
         
         # Send the message

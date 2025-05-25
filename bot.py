@@ -1412,7 +1412,7 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         conn.close()
         
         # Format basic statistics with simple string concatenation
-        stats_text = "*Статистика бота*\n\n"
+        stats_text = "Статистика бота\n\n"
         stats_text += "Всего пользователей: " + str(total_users) + "\n"
         stats_text += "Запустили бота: " + str(len(active_users)) + "\n"
         stats_text += "Администраторов: " + str(total_admins) + "\n\n"
@@ -1423,30 +1423,30 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             stats_text += "Добавлено, но не запустили бота: " + str(inactive_users) + "\n\n"
         
         # Add list of administrators
-        stats_text += "*Список администраторов:*\n"
+        stats_text += "Список администраторов:\n"
         for admin in admins_list:
             username, admin_id = admin
-            admin_display = f"@{username}" if username else f"ID: {admin_id}"
-            stats_text += f"- {admin_display}\n"
+            admin_display = "@" + username if username else "ID: " + str(admin_id)
+            stats_text += "- " + admin_display + "\n"
         stats_text += "\n"
         
         # Add statistics for latest video with list of users
-        stats_text += f"*Запись занятия 18 мая получили: {latest_video_unique_users}*\n"
+        stats_text += "Запись занятия 18 мая получили: " + str(latest_video_unique_users) + "\n"
         for user in latest_video_users:
             username, user_id = user
-            user_display = f"@{username}" if username else f"ID: {user_id}"
-            stats_text += f"- {user_display}\n"
+            user_display = "@" + username if username else "ID: " + str(user_id)
+            stats_text += "- " + user_display + "\n"
         stats_text += "\n"
         
         # Add statistics for previous video with list of users
-        stats_text += f"*Запись занятия 22 мая получили: {previous_video_unique_users}*\n"
+        stats_text += "Запись занятия 22 мая получили: " + str(previous_video_unique_users) + "\n"
         for user in previous_video_users:
             username, user_id = user
-            user_display = f"@{username}" if username else f"ID: {user_id}"
-            stats_text += f"- {user_display}\n"
+            user_display = "@" + username if username else "ID: " + str(user_id)
+            stats_text += "- " + user_display + "\n"
         
         # Send statistics
-        update.message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
+        update.message.reply_text(stats_text)
         log_action(user_id, 'show_stats', 'admin_command')
     except Exception as e:
         error_message = "Ошибка при получении статистики: " + str(e)

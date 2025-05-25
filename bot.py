@@ -7,6 +7,8 @@ import os
 import time
 import re
 import random
+import signal
+import sys
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, ParseMode, ReplyKeyboardMarkup, KeyboardButton
@@ -2001,7 +2003,26 @@ def show_user_lists(update: Update, context: CallbackContext) -> None:
         update.message.reply_text(error_message)
         print("Error in show_user_lists: " + str(e))
 
+# Глобальная переменная для хранения экземпляра Updater
+global_updater = None
+
+# Функция для корректного завершения работы бота
+def shutdown_bot(signal_number=None, frame=None):
+    print("Получен сигнал завершения. Корректно завершаем работу бота...")
+    global global_updater
+    if global_updater:
+        print("Останавливаем бота...")
+        global_updater.stop()
+        print("Бот остановлен.")
+    sys.exit(0)
+
 def main() -> None:
+    global global_updater
+    
+    # Регистрируем обработчики сигналов для корректного завершения работы
+    signal.signal(signal.SIGINT, shutdown_bot)  # Ctrl+C
+    signal.signal(signal.SIGTERM, shutdown_bot)  # Сигнал завершения от системы
+    
     # Initialize database with all required tables
     try:
         init_database()
@@ -2021,8 +2042,9 @@ def main() -> None:
         logger.error("No token provided. Set the TELEGRAM_TOKEN environment variable.")
         return
     
-    # Create the Updater
-    updater = Updater(token)
+    # Create the Updater with increased timeout and retry settings
+    updater = Updater(token, request_kwargs={'read_timeout': 30, 'connect_timeout': 30}, use_context=True)
+    global_updater = updater
     
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
@@ -2054,12 +2076,28 @@ def main() -> None:
     # Register message handler
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
     
-    # Start the Bot
-    updater.start_polling()
-    logger.info("Bot started")
-    
-    # Run the bot until you press Ctrl-C
-    updater.idle()
+    # Start the Bot with error handling
+    try:
+        # Увеличиваем время между повторными попытками при ошибках
+        updater.start_polling(poll_interval=1.0, timeout=30, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        
+        # Log that the bot has started
+        logger.info('Bot started')
+        
+        # Run the bot until you press Ctrl-C or the process receives SIGINT,
+        # SIGTERM or SIGABRT. This should be used most of the time, since
+        # start_polling() is non-blocking and will stop the bot gracefully.
+        updater.idle()
+    except Exception as e:
+        logger.error(f'Ошибка при запуске бота: {e}')
+        # Если произошла ошибка конфликта, попробуем корректно завершить работу
+        if 'Conflict' in str(e):
+            logger.warning('Обнаружен конфликт с другим экземпляром бота. Завершаем работу...')
+            shutdown_bot()
+        else:
+            # Для других ошибок просто логируем и завершаем
+            logger.error(f'Неожиданная ошибка: {e}')
+            shutdown_bot()
 
 if __name__ == '__main__':
     main()

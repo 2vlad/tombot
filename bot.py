@@ -2143,7 +2143,7 @@ def main() -> None:
     # Start the Bot with error handling
     try:
         # Увеличиваем время между повторными попытками при ошибках и очищаем очередь обновлений
-        updater.start_polling(poll_interval=1.0, timeout=30, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES, clean=True)
+        updater.start_polling(poll_interval=1.0, timeout=30, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
         
         # Log that the bot has started
         logger.info('Bot started')

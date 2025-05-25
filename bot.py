@@ -1506,28 +1506,46 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             print(f"Ошибка при получении дат занятий: {e}")
         
-        # Жестко задаем соответствие действий и дат
-        # Это гарантирует, что все записи будут отображаться корректно
+        # Парсим информацию о действиях с видео из логов
+        # Ищем все действия, связанные с получением видео
+        video_actions_by_date = {}
+        
+        # Создаем словарь для хранения действий по датам
+        for action, count in video_actions:
+            # Если действие содержит дату в формате 'get_video_XX мая'
+            if action.startswith('get_video_') and 'мая' in action:
+                # Извлекаем дату из названия действия
+                date = action.replace('get_video_', '')
+                if date not in video_actions_by_date:
+                    video_actions_by_date[date] = []
+                video_actions_by_date[date].append(action)
+            # Обрабатываем стандартные действия
+            elif action == 'get_latest_video':
+                date = '25 мая'
+                if date not in video_actions_by_date:
+                    video_actions_by_date[date] = []
+                video_actions_by_date[date].append(action)
+            elif action == 'get_previous_video':
+                date = '22 мая'
+                if date not in video_actions_by_date:
+                    video_actions_by_date[date] = []
+                video_actions_by_date[date].append(action)
+        
+        # Добавляем запись 18 мая, даже если нет действий
+        if '18 мая' not in video_actions_by_date:
+            video_actions_by_date['18 мая'] = []
+            # Добавляем фиктивное действие для 18 мая для отображения в статистике
+            video_actions.append(('get_video_18 мая', 0))
+            video_actions_by_date['18 мая'].append('get_video_18 мая')
+        
+        # Жестко задаем соответствие действий и дат для поиска в логах
         video_dates = {
             'get_latest_video': '25 мая',
             'get_video_25 мая': '25 мая',
             'get_previous_video': '22 мая',
             'get_video_22 мая': '22 мая',
-            'get_video_2': '18 мая',
             'get_video_18 мая': '18 мая'
         }
-        
-        # Добавляем специальные действия для обеспечения отображения всех записей
-        # Добавляем действия для 18 мая, если их нет в логах
-        has_18_may = False
-        for action, _ in video_actions:
-            if action in video_dates and video_dates[action] == '18 мая':
-                has_18_may = True
-                break
-        
-        if not has_18_may:
-            # Добавляем фиктивное действие для 18 мая
-            video_actions.append(('get_video_18 мая', 0))
         
         # Группируем действия по датам занятий
         date_groups = {}
@@ -1555,92 +1573,78 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         # Жестко задаем порядок отображения дат
         ordered_dates = ['18 мая', '22 мая', '25 мая']
         
+        # Создаем словарь для хранения действий по датам
+        date_to_actions = {
+            '18 мая': [],
+            '22 мая': [],
+            '25 мая': []
+        }
+        
+        # Распределяем действия по датам на основе их названий
+        for action, _ in video_actions:
+            # Действия для 25 мая
+            if action == 'get_latest_video' or action == 'get_video_25 мая' or '25 мая' in action:
+                date_to_actions['25 мая'].append(action)
+            # Действия для 22 мая
+            elif action == 'get_previous_video' or action == 'get_video_22 мая' or '22 мая' in action:
+                date_to_actions['22 мая'].append(action)
+            # Действия для 18 мая (включая get_video_2, если оно есть)
+            elif action == 'get_video_2' or action == 'get_video_18 мая' or '18 мая' in action:
+                date_to_actions['18 мая'].append(action)
+            
         # Обрабатываем каждую дату в заданном порядке
         for date in ordered_dates:
-            # Проверяем, есть ли действия для этой даты
-            actions_for_date = []
-            for action, _ in video_actions:
-                if action in video_dates and video_dates[action] == date:
-                    actions_for_date.append(action)
+            # Получаем список действий для этой даты
+            actions_for_date = date_to_actions[date]
             
-            # Если нет действий для этой даты, пропускаем её
-            if date == '18 мая':
-                # Для 18 мая всегда показываем статистику, даже если нет действий
-                # Используем специальный запрос для получения пользователей, которые получили запись 18 мая
-                if db_type == 'postgres':
-                    cursor.execute("""
-                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                        FROM logs l
-                        LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE l.action = 'get_video_2' OR l.action = 'get_video_18 мая' 
-                        ORDER BY l.username
-                    """)
+            # Если есть действия для этой даты или это 18 мая (которое всегда показываем)
+            if actions_for_date or date == '18 мая':
+                # Если у нас есть действия для этой даты, формируем запрос с использованием IN
+                if actions_for_date:
+                    # Для нескольких действий используем IN с параметрами
+                    placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(actions_for_date))
+                    
+                    if db_type == 'postgres':
+                        query = f"""
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE l.action IN ({placeholders}) 
+                            ORDER BY l.username
+                        """
+                    else:
+                        query = f"""
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE l.action IN ({placeholders}) 
+                            ORDER BY l.username
+                        """
+                    
+                    cursor.execute(query, actions_for_date)
                 else:
-                    cursor.execute("""
-                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                        FROM logs l
-                        LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE l.action = 'get_video_2' OR l.action = 'get_video_18 мая' 
-                        ORDER BY l.username
-                    """)
+                    # Если нет действий, но это 18 мая, используем пустой запрос (вернет 0 пользователей)
+                    if db_type == 'postgres':
+                        cursor.execute("""
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE 1=0 -- Пустой результат
+                            ORDER BY l.username
+                        """)
+                    else:
+                        cursor.execute("""
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE 1=0 -- Пустой результат
+                            ORDER BY l.username
+                        """)
                 
                 video_users = cursor.fetchall()
-                
-                # Если есть пользователи, показываем статистику
-                if video_users:
-                    stats_text += f"Запись занятия {date} получили: {len(video_users)}\n"
-                    
-                    # Добавляем список пользователей
-                    for user in video_users:
-                        username, user_id, first_name, last_name = user
-                        # Формируем отображаемое имя пользователя
-                        if username and username != 'admin':
-                            user_display = "@" + username
-                            # Добавляем имя пользователя, если оно есть
-                            if first_name:
-                                full_name = first_name + (" " + last_name if last_name else "")
-                                user_display += f" ({full_name})"
-                        elif first_name:
-                            full_name = first_name + (" " + last_name if last_name else "")
-                            user_display = full_name + f" (ID: {user_id})"
-                        else:
-                            user_display = "ID: " + str(user_id)
-                        stats_text += "- " + user_display + "\n"
-                    
-                    stats_text += "\n"
-                else:
-                    # Если нет пользователей, показываем пустой список
-                    stats_text += f"Запись занятия {date} получили: 0\n\n"
-            elif len(actions_for_date) > 0:
-                # Для других дат показываем статистику, только если есть действия
-                # Для нескольких действий используем IN с параметрами
-                placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(actions_for_date))
-                
-                if db_type == 'postgres':
-                    query = f"""
-                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                        FROM logs l
-                        LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE l.action IN ({placeholders}) 
-                        ORDER BY l.username
-                    """
-                else:
-                    query = f"""
-                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                        FROM logs l
-                        LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE l.action IN ({placeholders}) 
-                        ORDER BY l.username
-                    """
-                
-                cursor.execute(query, actions_for_date)
-                video_users = cursor.fetchall()
-                
-                # Подсчитываем общее количество пользователей
-                total_users = len(video_users)
                 
                 # Добавляем статистику для этой даты
-                stats_text += f"Запись занятия {date} получили: {total_users}\n"
+                stats_text += f"Запись занятия {date} получили: {len(video_users)}\n"
                 
                 # Добавляем список пользователей
                 for user in video_users:
@@ -1661,6 +1665,7 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                 
                 # Добавляем пустую строку после каждой группы
                 stats_text += "\n"
+
             
 
         

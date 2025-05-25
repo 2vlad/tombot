@@ -1514,7 +1514,10 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         if 'get_video_2' not in video_dates and 'get_video_2' in [action for action, _ in video_actions]:
             video_dates['get_video_2'] = '18 мая'
         
-        # Добавляем статистику для каждого видео
+        # Группируем действия по датам занятий
+        date_groups = {}
+        date_actions = {}
+        
         for action, count in video_actions:
             # Определяем дату занятия
             if action in video_dates:
@@ -1526,29 +1529,68 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                 # Если дата неизвестна, используем название действия
                 date = action.replace('get_', '').replace('_video', '').replace('video_', '')
             
-            # Получаем список пользователей, которые получили это видео
-            if db_type == 'postgres':
-                cursor.execute("""
-                    SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                    FROM logs l
-                    LEFT JOIN users u ON l.user_id = u.user_id
-                    WHERE l.action = %s 
-                    ORDER BY l.username
-                """, (action,))
+            # Добавляем действие в группу по дате
+            if date not in date_groups:
+                date_groups[date] = []
+                date_actions[date] = []
+            
+            date_groups[date].append((action, count))
+            date_actions[date].append(action)
+        
+        # Обрабатываем каждую группу по дате
+        for date, actions_with_counts in date_groups.items():
+            # Получаем список всех пользователей, которые получили эту запись
+            if len(date_actions[date]) == 1:
+                # Если только одно действие, используем простой запрос
+                action = date_actions[date][0]
+                if db_type == 'postgres':
+                    cursor.execute("""
+                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                        FROM logs l
+                        LEFT JOIN users u ON l.user_id = u.user_id
+                        WHERE l.action = %s 
+                        ORDER BY l.username
+                    """, (action,))
+                else:
+                    cursor.execute("""
+                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                        FROM logs l
+                        LEFT JOIN users u ON l.user_id = u.user_id
+                        WHERE l.action = ? 
+                        ORDER BY l.username
+                    """, (action,))
             else:
-                cursor.execute("""
-                    SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                    FROM logs l
-                    LEFT JOIN users u ON l.user_id = u.user_id
-                    WHERE l.action = ? 
-                    ORDER BY l.username
-                """, (action,))
+                # Для нескольких действий используем IN с параметрами
+                placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(date_actions[date]))
+                
+                if db_type == 'postgres':
+                    query = f"""
+                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                        FROM logs l
+                        LEFT JOIN users u ON l.user_id = u.user_id
+                        WHERE l.action IN ({placeholders}) 
+                        ORDER BY l.username
+                    """
+                else:
+                    query = f"""
+                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                        FROM logs l
+                        LEFT JOIN users u ON l.user_id = u.user_id
+                        WHERE l.action IN ({placeholders}) 
+                        ORDER BY l.username
+                    """
+                
+                cursor.execute(query, date_actions[date])
             
             video_users = cursor.fetchall()
             
-            # Добавляем статистику для этого видео
-            stats_text += f"Запись занятия {date} получили: {count}\n"
+            # Подсчитываем общее количество пользователей
+            total_users = len(video_users)
             
+            # Добавляем статистику для этой даты
+            stats_text += f"Запись занятия {date} получили: {total_users}\n"
+            
+            # Добавляем список пользователей
             for user in video_users:
                 username, user_id, first_name, last_name = user
                 # Формируем отображаемое имя пользователя
@@ -1565,6 +1607,7 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                     user_display = "ID: " + str(user_id)
                 stats_text += "- " + user_display + "\n"
             
+            # Добавляем пустую строку после каждой группы
             stats_text += "\n"
         
         # Send statistics

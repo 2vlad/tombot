@@ -1378,34 +1378,38 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         # Get list of users who clicked on the latest video button
         if db_type == 'postgres':
             cursor.execute("""
-                SELECT DISTINCT username, user_id 
-                FROM logs 
-                WHERE action = 'get_latest_video' 
-                ORDER BY username
+                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.user_id
+                WHERE l.action = 'get_latest_video' 
+                ORDER BY l.username
             """)
         else:
             cursor.execute("""
-                SELECT DISTINCT username, user_id 
-                FROM logs 
-                WHERE action = 'get_latest_video' 
-                ORDER BY username
+                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.user_id
+                WHERE l.action = 'get_latest_video' 
+                ORDER BY l.username
             """)
         latest_video_users = cursor.fetchall()
         
         # Get list of users who clicked on the previous video button
         if db_type == 'postgres':
             cursor.execute("""
-                SELECT DISTINCT username, user_id 
-                FROM logs 
-                WHERE action = 'get_previous_video' 
-                ORDER BY username
+                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.user_id
+                WHERE l.action = 'get_previous_video' 
+                ORDER BY l.username
             """)
         else:
             cursor.execute("""
-                SELECT DISTINCT username, user_id 
-                FROM logs 
-                WHERE action = 'get_previous_video' 
-                ORDER BY username
+                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.user_id
+                WHERE l.action = 'get_previous_video' 
+                ORDER BY l.username
             """)
         previous_video_users = cursor.fetchall()
         
@@ -1433,16 +1437,38 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         # Add statistics for latest video with list of users
         stats_text += "Запись занятия 18 мая получили: " + str(latest_video_unique_users) + "\n"
         for user in latest_video_users:
-            username, user_id = user
-            user_display = "@" + username if username else "ID: " + str(user_id)
+            username, user_id, first_name, last_name = user
+            # Формируем отображаемое имя пользователя
+            if username and username != 'admin':
+                user_display = "@" + username
+                # Добавляем имя пользователя, если оно есть
+                if first_name:
+                    full_name = first_name + (" " + last_name if last_name else "")
+                    user_display += f" ({full_name})"
+            elif first_name:
+                full_name = first_name + (" " + last_name if last_name else "")
+                user_display = full_name + f" (ID: {user_id})"
+            else:
+                user_display = "ID: " + str(user_id)
             stats_text += "- " + user_display + "\n"
         stats_text += "\n"
         
         # Add statistics for previous video with list of users
         stats_text += "Запись занятия 22 мая получили: " + str(previous_video_unique_users) + "\n"
         for user in previous_video_users:
-            username, user_id = user
-            user_display = "@" + username if username else "ID: " + str(user_id)
+            username, user_id, first_name, last_name = user
+            # Формируем отображаемое имя пользователя
+            if username and username != 'admin':
+                user_display = "@" + username
+                # Добавляем имя пользователя, если оно есть
+                if first_name:
+                    full_name = first_name + (" " + last_name if last_name else "")
+                    user_display += f" ({full_name})"
+            elif first_name:
+                full_name = first_name + (" " + last_name if last_name else "")
+                user_display = full_name + f" (ID: {user_id})"
+            else:
+                user_display = "ID: " + str(user_id)
             stats_text += "- " + user_display + "\n"
         
         # Send statistics
@@ -1934,6 +1960,10 @@ def show_user_lists(update: Update, context: CallbackContext) -> None:
                 # Формируем отображаемое имя администратора, используя доступную информацию
                 if username and username != 'admin':
                     admin_display = "@" + username
+                    # Добавляем имя пользователя, если оно есть
+                    if first_name:
+                        full_name = first_name + (" " + last_name if last_name else "")
+                        admin_display += f" ({full_name})"
                 elif first_name:
                     admin_display = first_name + (" " + last_name if last_name else "") + f" (ID: {admin_id})"
                 else:
@@ -1953,6 +1983,10 @@ def show_user_lists(update: Update, context: CallbackContext) -> None:
                 # Формируем отображаемое имя пользователя, используя доступную информацию
                 if username and username != 'admin':
                     user_display = "@" + username
+                    # Добавляем имя пользователя, если оно есть
+                    if first_name:
+                        full_name = first_name + (" " + last_name if last_name else "")
+                        user_display += f" ({full_name})"
                 elif first_name:
                     user_display = first_name + (" " + last_name if last_name else "") + f" (ID: {user_id})"
                 else:

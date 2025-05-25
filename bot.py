@@ -1506,13 +1506,28 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             print(f"Ошибка при получении дат занятий: {e}")
         
-        # Если не удалось получить даты из базы, используем стандартные значения
-        if 'get_latest_video' not in video_dates:
-            video_dates['get_latest_video'] = '25 мая'
-        if 'get_previous_video' not in video_dates:
-            video_dates['get_previous_video'] = '22 мая'
-        if 'get_video_2' not in video_dates and 'get_video_2' in [action for action, _ in video_actions]:
-            video_dates['get_video_2'] = '18 мая'
+        # Жестко задаем соответствие действий и дат
+        # Это гарантирует, что все записи будут отображаться корректно
+        video_dates = {
+            'get_latest_video': '25 мая',
+            'get_video_25 мая': '25 мая',
+            'get_previous_video': '22 мая',
+            'get_video_22 мая': '22 мая',
+            'get_video_2': '18 мая',
+            'get_video_18 мая': '18 мая'
+        }
+        
+        # Добавляем специальные действия для обеспечения отображения всех записей
+        # Добавляем действия для 18 мая, если их нет в логах
+        has_18_may = False
+        for action, _ in video_actions:
+            if action in video_dates and video_dates[action] == '18 мая':
+                has_18_may = True
+                break
+        
+        if not has_18_may:
+            # Добавляем фиктивное действие для 18 мая
+            video_actions.append(('get_video_18 мая', 0))
         
         # Группируем действия по датам занятий
         date_groups = {}
@@ -1537,31 +1552,69 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             date_groups[date].append((action, count))
             date_actions[date].append(action)
         
-        # Обрабатываем каждую группу по дате
-        for date, actions_with_counts in date_groups.items():
-            # Получаем список всех пользователей, которые получили эту запись
-            if len(date_actions[date]) == 1:
-                # Если только одно действие, используем простой запрос
-                action = date_actions[date][0]
+        # Жестко задаем порядок отображения дат
+        ordered_dates = ['18 мая', '22 мая', '25 мая']
+        
+        # Обрабатываем каждую дату в заданном порядке
+        for date in ordered_dates:
+            # Проверяем, есть ли действия для этой даты
+            actions_for_date = []
+            for action, _ in video_actions:
+                if action in video_dates and video_dates[action] == date:
+                    actions_for_date.append(action)
+            
+            # Если нет действий для этой даты, пропускаем её
+            if date == '18 мая':
+                # Для 18 мая всегда показываем статистику, даже если нет действий
+                # Используем специальный запрос для получения пользователей, которые получили запись 18 мая
                 if db_type == 'postgres':
                     cursor.execute("""
                         SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
                         FROM logs l
                         LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE l.action = %s 
+                        WHERE l.action = 'get_video_2' OR l.action = 'get_video_18 мая' 
                         ORDER BY l.username
-                    """, (action,))
+                    """)
                 else:
                     cursor.execute("""
                         SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
                         FROM logs l
                         LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE l.action = ? 
+                        WHERE l.action = 'get_video_2' OR l.action = 'get_video_18 мая' 
                         ORDER BY l.username
-                    """, (action,))
-            else:
+                    """)
+                
+                video_users = cursor.fetchall()
+                
+                # Если есть пользователи, показываем статистику
+                if video_users:
+                    stats_text += f"Запись занятия {date} получили: {len(video_users)}\n"
+                    
+                    # Добавляем список пользователей
+                    for user in video_users:
+                        username, user_id, first_name, last_name = user
+                        # Формируем отображаемое имя пользователя
+                        if username and username != 'admin':
+                            user_display = "@" + username
+                            # Добавляем имя пользователя, если оно есть
+                            if first_name:
+                                full_name = first_name + (" " + last_name if last_name else "")
+                                user_display += f" ({full_name})"
+                        elif first_name:
+                            full_name = first_name + (" " + last_name if last_name else "")
+                            user_display = full_name + f" (ID: {user_id})"
+                        else:
+                            user_display = "ID: " + str(user_id)
+                        stats_text += "- " + user_display + "\n"
+                    
+                    stats_text += "\n"
+                else:
+                    # Если нет пользователей, показываем пустой список
+                    stats_text += f"Запись занятия {date} получили: 0\n\n"
+            elif len(actions_for_date) > 0:
+                # Для других дат показываем статистику, только если есть действия
                 # Для нескольких действий используем IN с параметрами
-                placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(date_actions[date]))
+                placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(actions_for_date))
                 
                 if db_type == 'postgres':
                     query = f"""
@@ -1580,35 +1633,36 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                         ORDER BY l.username
                     """
                 
-                cursor.execute(query, date_actions[date])
-            
-            video_users = cursor.fetchall()
-            
-            # Подсчитываем общее количество пользователей
-            total_users = len(video_users)
-            
-            # Добавляем статистику для этой даты
-            stats_text += f"Запись занятия {date} получили: {total_users}\n"
-            
-            # Добавляем список пользователей
-            for user in video_users:
-                username, user_id, first_name, last_name = user
-                # Формируем отображаемое имя пользователя
-                if username and username != 'admin':
-                    user_display = "@" + username
-                    # Добавляем имя пользователя, если оно есть
-                    if first_name:
+                cursor.execute(query, actions_for_date)
+                video_users = cursor.fetchall()
+                
+                # Подсчитываем общее количество пользователей
+                total_users = len(video_users)
+                
+                # Добавляем статистику для этой даты
+                stats_text += f"Запись занятия {date} получили: {total_users}\n"
+                
+                # Добавляем список пользователей
+                for user in video_users:
+                    username, user_id, first_name, last_name = user
+                    # Формируем отображаемое имя пользователя
+                    if username and username != 'admin':
+                        user_display = "@" + username
+                        # Добавляем имя пользователя, если оно есть
+                        if first_name:
+                            full_name = first_name + (" " + last_name if last_name else "")
+                            user_display += f" ({full_name})"
+                    elif first_name:
                         full_name = first_name + (" " + last_name if last_name else "")
-                        user_display += f" ({full_name})"
-                elif first_name:
-                    full_name = first_name + (" " + last_name if last_name else "")
-                    user_display = full_name + f" (ID: {user_id})"
-                else:
-                    user_display = "ID: " + str(user_id)
-                stats_text += "- " + user_display + "\n"
+                        user_display = full_name + f" (ID: {user_id})"
+                    else:
+                        user_display = "ID: " + str(user_id)
+                    stats_text += "- " + user_display + "\n"
+                
+                # Добавляем пустую строку после каждой группы
+                stats_text += "\n"
             
-            # Добавляем пустую строку после каждой группы
-            stats_text += "\n"
+
         
         # Send statistics
         update.message.reply_text(stats_text)

@@ -53,7 +53,7 @@ BUTTONS = {
 # Общие тексты сообщений
 MSG_WELCOME = 'Привет, я бот для занятий по авангардному кино. Чтобы получить запись прошедшего занятия, нажми кнопку. Записи хранятся 7 дней.'
 MSG_ACCOUNT_ACTIVATED = 'Аккаунт активирован. Используй кнопки для доступа к записям занятий.'
-MSG_NOT_AUTHORIZED = 'Для доступа к боту необходимо зарегистрироваться. Пожалуйста, обратись к @tovlad.'
+MSG_NOT_AUTHORIZED = 'Чтобы получить доступ, напиши @2vlad.'
 
 # Enable logging
 logging.basicConfig(
@@ -344,8 +344,7 @@ def start(update: Update, context: CallbackContext) -> None:
         conn.close()
         
         update.message.reply_text(
-            f'Привет, {first_name}! Для доступа к боту необходимо быть зарегистрированным студентом. '
-            'Пожалуйста, обратитесь к администратору киношколы для регистрации.'
+            f'Привет, {first_name}! {MSG_NOT_AUTHORIZED}'
         )
 
 def refresh_keyboard(update: Update, context: CallbackContext) -> None:

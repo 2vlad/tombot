@@ -1327,6 +1327,7 @@ def list_users(update: Update, context: CallbackContext) -> None:
 
 
 
+
 def show_stats(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -1367,10 +1368,51 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             cursor.execute("SELECT COUNT(DISTINCT COALESCE(username, user_id)) FROM logs WHERE action = 'get_previous_video'")
         previous_video_unique_users = cursor.fetchone()[0]
         
+        # Get list of administrators
+        if db_type == 'postgres':
+            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = TRUE ORDER BY username")
+        else:
+            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = 1 ORDER BY username")
+        admins_list = cursor.fetchall()
+        
+        # Get list of users who clicked on the latest video button
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT DISTINCT username, user_id 
+                FROM logs 
+                WHERE action = 'get_latest_video' 
+                ORDER BY username
+            """)
+        else:
+            cursor.execute("""
+                SELECT DISTINCT username, user_id 
+                FROM logs 
+                WHERE action = 'get_latest_video' 
+                ORDER BY username
+            """)
+        latest_video_users = cursor.fetchall()
+        
+        # Get list of users who clicked on the previous video button
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT DISTINCT username, user_id 
+                FROM logs 
+                WHERE action = 'get_previous_video' 
+                ORDER BY username
+            """)
+        else:
+            cursor.execute("""
+                SELECT DISTINCT username, user_id 
+                FROM logs 
+                WHERE action = 'get_previous_video' 
+                ORDER BY username
+            """)
+        previous_video_users = cursor.fetchall()
+        
         conn.close()
         
         # Format basic statistics with simple string concatenation
-        stats_text = "*Статистика бота*" + "\n\n"
+        stats_text = "*Статистика бота*\n\n"
         stats_text += "Всего пользователей: " + str(total_users) + "\n"
         stats_text += "Запустили бота: " + str(len(active_users)) + "\n"
         stats_text += "Администраторов: " + str(total_admins) + "\n\n"
@@ -1380,9 +1422,28 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         if inactive_users > 0:
             stats_text += "Добавлено, но не запустили бота: " + str(inactive_users) + "\n\n"
         
-        # Add simplified statistics for videos
-        stats_text += "*Запись занятия 18 мая получили: " + str(latest_video_unique_users) + "*\n\n"
-        stats_text += "*Запись занятия 22 мая получили: " + str(previous_video_unique_users) + "*\n"
+        # Add list of administrators
+        stats_text += "*Список администраторов:*\n"
+        for admin in admins_list:
+            username, admin_id = admin
+            admin_display = f"@{username}" if username else f"ID: {admin_id}"
+            stats_text += f"- {admin_display}\n"
+        stats_text += "\n"
+        
+        # Add statistics for latest video with list of users
+        stats_text += f"*Запись занятия 18 мая получили: {latest_video_unique_users}*\n"
+        for user in latest_video_users:
+            username, user_id = user
+            user_display = f"@{username}" if username else f"ID: {user_id}"
+            stats_text += f"- {user_display}\n"
+        stats_text += "\n"
+        
+        # Add statistics for previous video with list of users
+        stats_text += f"*Запись занятия 22 мая получили: {previous_video_unique_users}*\n"
+        for user in previous_video_users:
+            username, user_id = user
+            user_display = f"@{username}" if username else f"ID: {user_id}"
+            stats_text += f"- {user_display}\n"
         
         # Send statistics
         update.message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
@@ -1391,6 +1452,7 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         error_message = "Ошибка при получении статистики: " + str(e)
         update.message.reply_text(error_message)
         print("Error in show_stats: " + str(e))
+
 
 def get_previous_video(update: Update, context: CallbackContext) -> None:
     user = update.effective_user

@@ -1768,30 +1768,40 @@ def show_user_lists(update: Update, context: CallbackContext) -> None:
         
         # Add list of administrators
         message_text += "Администраторы:\n"
-        for admin in admins_list:
-            username, admin_id, first_name, last_name = admin
-            # Формируем отображаемое имя администратора, используя доступную информацию
-            if username:
-                admin_display = "@" + username
-            elif first_name:
-                admin_display = first_name + (" " + last_name if last_name else "") + f" (ID: {admin_id})"
-            else:
-                admin_display = "ID: " + str(admin_id)
-            message_text += "- " + admin_display + "\n"
+        
+        # Проверка на наличие администраторов
+        if not admins_list:
+            message_text += "- Администраторы не найдены\n"
+        else:
+            for admin in admins_list:
+                username, admin_id, first_name, last_name = admin
+                # Формируем отображаемое имя администратора, используя доступную информацию
+                if username and username != 'admin':
+                    admin_display = "@" + username
+                elif first_name:
+                    admin_display = first_name + (" " + last_name if last_name else "") + f" (ID: {admin_id})"
+                else:
+                    admin_display = "ID: " + str(admin_id)
+                message_text += "- " + admin_display + "\n"
         message_text += "\n"
         
         # Add list of active users
         message_text += "Пользователи, запустившие бота:\n"
-        for user in active_users:
-            username, user_id, first_name, last_name = user
-            # Формируем отображаемое имя пользователя, используя доступную информацию
-            if username:
-                user_display = "@" + username
-            elif first_name:
-                user_display = first_name + (" " + last_name if last_name else "") + f" (ID: {user_id})"
-            else:
-                user_display = "ID: " + str(user_id)
-            message_text += "- " + user_display + "\n"
+        
+        # Проверка на наличие активных пользователей
+        if not active_users:
+            message_text += "- Активные пользователи не найдены\n"
+        else:
+            for user in active_users:
+                username, user_id, first_name, last_name = user
+                # Формируем отображаемое имя пользователя, используя доступную информацию
+                if username and username != 'admin':
+                    user_display = "@" + username
+                elif first_name:
+                    user_display = first_name + (" " + last_name if last_name else "") + f" (ID: {user_id})"
+                else:
+                    user_display = "ID: " + str(user_id)
+                message_text += "- " + user_display + "\n"
         
         # Send the message
         update.message.reply_text(message_text)

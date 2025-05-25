@@ -1329,249 +1329,113 @@ def list_users(update: Update, context: CallbackContext) -> None:
 
 
 
+def get_previous_video(update: Update, context: CallbackContext) -> None:
 def show_stats(update: Update, context: CallbackContext) -> None:
+    """Показать статистику использования бота"""
+    # Проверяем, является ли пользователь администратором
     user_id = update.effective_user.id
-    
     if not is_admin(user_id):
-        update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        update.message.reply_text("Эта команда доступна только администраторам.")
         return
-    
+
     try:
-        conn, db_type = get_db_connection()
+        # Подключаемся к базе данных
+        conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Total users
+
+        # Определяем тип базы данных
+        db_type = 'sqlite'
+        try:
+            cursor.execute("SELECT version()")
+            db_type = 'postgres'
+        except:
+            pass
+
+        # Получаем общее количество пользователей
         cursor.execute("SELECT COUNT(*) FROM users")
         total_users = cursor.fetchone()[0]
-        
-        # Total admins
-        if db_type == 'postgres':
-            cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = TRUE")
-        else:
-            cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
-        total_admins = cursor.fetchone()[0]
-        
-        # Create list of users who started the bot
-        cursor.execute("SELECT DISTINCT user_id FROM logs")
-        active_users = set([row[0] for row in cursor.fetchall()])
-        
-        # Get count of unique users who accessed the latest video
-        if db_type == 'postgres':
-            cursor.execute("SELECT COUNT(DISTINCT COALESCE(username::text, user_id::text)) FROM logs WHERE action = 'get_latest_video'")
-        else:
-            cursor.execute("SELECT COUNT(DISTINCT COALESCE(username, user_id)) FROM logs WHERE action = 'get_latest_video'")
-        latest_video_unique_users = cursor.fetchone()[0]
-        
-        # Get count of unique users who accessed the previous video
-        if db_type == 'postgres':
-            cursor.execute("SELECT COUNT(DISTINCT COALESCE(username::text, user_id::text)) FROM logs WHERE action = 'get_previous_video'")
-        else:
-            cursor.execute("SELECT COUNT(DISTINCT COALESCE(username, user_id)) FROM logs WHERE action = 'get_previous_video'")
-        previous_video_unique_users = cursor.fetchone()[0]
-        
-        # Get list of administrators
-        if db_type == 'postgres':
-            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = TRUE ORDER BY username")
-        else:
-            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = 1 ORDER BY username")
-        admins_list = cursor.fetchall()
-        
-        # Get list of users who clicked on the latest video button
-        if db_type == 'postgres':
-            cursor.execute("""
-                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                FROM logs l
-                LEFT JOIN users u ON l.user_id = u.user_id
-                WHERE l.action = 'get_latest_video' 
-                ORDER BY l.username
-            """)
-        else:
-            cursor.execute("""
-                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                FROM logs l
-                LEFT JOIN users u ON l.user_id = u.user_id
-                WHERE l.action = 'get_latest_video' 
-                ORDER BY l.username
-            """)
-        latest_video_users = cursor.fetchall()
-        
-        # Get list of users who clicked on the previous video button
-        if db_type == 'postgres':
-            cursor.execute("""
-                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                FROM logs l
-                LEFT JOIN users u ON l.user_id = u.user_id
-                WHERE l.action = 'get_previous_video' 
-                ORDER BY l.username
-            """)
-        else:
-            cursor.execute("""
-                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                FROM logs l
-                LEFT JOIN users u ON l.user_id = u.user_id
-                WHERE l.action = 'get_previous_video' 
-                ORDER BY l.username
-            """)
-        previous_video_users = cursor.fetchall()
-        
-        # Format basic statistics with simple string concatenation
-        stats_text = "Статистика бота\n\n"
-        stats_text += "Всего пользователей: " + str(total_users) + "\n"
-        stats_text += "Запустили бота: " + str(len(active_users)) + "\n"
-        stats_text += "Администраторов: " + str(total_admins) + "\n\n"
-        
-        # If there are users who were added but didn't start the bot
-        inactive_users = total_users - len(active_users)
-        if inactive_users > 0:
-            stats_text += "Добавлено, но не запустили бота: " + str(inactive_users) + "\n\n"
-        
-        # Add list of administrators
+
+        # Получаем количество активированных пользователей
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+        active_users = cursor.fetchone()[0]
+
+        # Получаем количество администраторов
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+        admin_count = cursor.fetchone()[0]
+
+        # Получаем количество неактивированных пользователей
+        inactive_users = total_users - active_users
+
+        # Формируем текст статистики
+        stats_text = f"Статистика бота:\n"
+        stats_text += f"Всего пользователей: {total_users}\n"
+        stats_text += f"Запустили бота: {active_users}\n"
+        stats_text += f"Администраторов: {admin_count}\n"
+        stats_text += f"Добавлено, но не запустили бота: {inactive_users}\n\n"
+
+        # Получаем список администраторов
+        cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
+        admins = cursor.fetchall()
+
+        # Добавляем список администраторов
         stats_text += "Список администраторов:\n"
-        for admin in admins_list:
-            username, admin_id = admin
-            admin_display = "@" + username if username else "ID: " + str(admin_id)
-            stats_text += "- " + admin_display + "\n"
+        for admin in admins:
+            username, first_name, last_name = admin
+            if username:
+                admin_display = "@" + username
+            else:
+                admin_display = first_name + (" " + last_name if last_name else "")
+            stats_text += f"- {admin_display}\n"
+
         stats_text += "\n"
-        
-        # Получаем информацию о всех доступных записях занятий
+
+        # Получаем статистику по видео
+        # Сначала получаем все действия, связанные с получением видео
         if db_type == 'postgres':
             cursor.execute("""
-                SELECT action, COUNT(DISTINCT user_id) as count
-                FROM logs
-                WHERE action LIKE 'get_%_video' OR action LIKE 'get_video_%'
+                SELECT action, COUNT(*) 
+                FROM logs 
+                WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
                 GROUP BY action
-                ORDER BY action
             """)
         else:
             cursor.execute("""
-                SELECT action, COUNT(DISTINCT user_id) as count
-                FROM logs
-                WHERE action LIKE 'get_%_video' OR action LIKE 'get_video_%'
+                SELECT action, COUNT(*) 
+                FROM logs 
+                WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
                 GROUP BY action
-                ORDER BY action
             """)
-        
+
         video_actions = cursor.fetchall()
-        
-        # Дополнительно получаем информацию о нажатиях на кнопки с конкретными датами
-        if db_type == 'postgres':
-            cursor.execute("""
-                SELECT action, COUNT(DISTINCT user_id) as count
-                FROM logs
-                WHERE action LIKE 'get_video_%'
-                GROUP BY action
-                ORDER BY action
-            """)
-        else:
-            cursor.execute("""
-                SELECT action, COUNT(DISTINCT user_id) as count
-                FROM logs
-                WHERE action LIKE 'get_video_%'
-                GROUP BY action
-                ORDER BY action
-            """)
-        
-        date_specific_actions = cursor.fetchall()
-        
-        # Добавляем дата-специфичные действия в общий список
-        for action, count in date_specific_actions:
-            # Проверяем, есть ли уже такое действие в списке
-            if action not in [a for a, _ in video_actions]:
-                video_actions.append((action, count))
-        
-        # Получаем информацию о датах занятий из базы данных или из логов
-        # Сначала проверим, есть ли таблица videos
-        video_dates = {}
+
+        # Получаем информацию о соответствии действий и дат из базы данных
+        action_to_date = {}
         try:
-            if db_type == 'postgres':
-                cursor.execute("SELECT to_regclass('public.videos')")
-            else:
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='videos'")
+            # Запрашиваем данные из логов, где есть информация о записях занятий
+            cursor.execute("""
+                SELECT DISTINCT action, action_data 
+                FROM logs 
+                WHERE action_data LIKE 'Запись занятия%'
+                OR action LIKE 'get_video_%'
+                OR action IN ('get_latest_video', 'get_previous_video')
+            """)
             
-            table_exists = cursor.fetchone()[0] is not None
+            action_date_mapping = cursor.fetchall()
             
-            if table_exists:
-                # Получаем даты занятий из таблицы videos
-                cursor.execute("SELECT title, upload_date FROM videos ORDER BY upload_date DESC")
-                videos_info = cursor.fetchall()
-                
-                # Создаем маппинг для дат занятий
-                for i, (title, date) in enumerate(videos_info):
-                    if i == 0:
-                        video_dates['get_latest_video'] = date
-                    elif i == 1:
-                        video_dates['get_previous_video'] = date
-                    else:
-                        video_dates[f'get_video_{i}'] = date
+            # Создаем словарь соответствия действий и дат
+            for action, action_data in action_date_mapping:
+                if action_data and 'Запись занятия' in action_data:
+                    # Извлекаем дату из action_data (например, "Запись занятия 22 мая")
+                    date = action_data.replace('Запись занятия ', '')
+                    action_to_date[action] = date
         except Exception as e:
-            print(f"Ошибка при получении дат занятий: {e}")
+            print(f"Ошибка при получении соответствия действий и дат: {e}")
         
-        # Парсим информацию о действиях с видео из логов
-        # Ищем все действия, связанные с получением видео
-        video_actions_by_date = {}
-        
-        # Создаем словарь для хранения действий по датам
-        for action, count in video_actions:
-            # Если действие содержит дату в формате 'get_video_XX мая'
-            if action.startswith('get_video_') and 'мая' in action:
-                # Извлекаем дату из названия действия
-                date = action.replace('get_video_', '')
-                if date not in video_actions_by_date:
-                    video_actions_by_date[date] = []
-                video_actions_by_date[date].append(action)
-            # Обрабатываем стандартные действия
-            elif action == 'get_latest_video':
-                date = '25 мая'
-                if date not in video_actions_by_date:
-                    video_actions_by_date[date] = []
-                video_actions_by_date[date].append(action)
-            elif action == 'get_previous_video':
-                date = '22 мая'
-                if date not in video_actions_by_date:
-                    video_actions_by_date[date] = []
-                video_actions_by_date[date].append(action)
-        
-        # Добавляем запись 18 мая, даже если нет действий
-        if '18 мая' not in video_actions_by_date:
-            video_actions_by_date['18 мая'] = []
-            # Добавляем фиктивное действие для 18 мая для отображения в статистике
-            video_actions.append(('get_video_18 мая', 0))
-            video_actions_by_date['18 мая'].append('get_video_18 мая')
-        
-        # Жестко задаем соответствие действий и дат для поиска в логах
-        video_dates = {
-            'get_latest_video': '25 мая',
-            'get_video_25 мая': '25 мая',
-            'get_previous_video': '22 мая',
-            'get_video_22 мая': '22 мая',
-            'get_video_18 мая': '18 мая'
-        }
-        
-        # Группируем действия по датам занятий
-        date_groups = {}
-        date_actions = {}
-        
-        for action, count in video_actions:
-            # Определяем дату занятия
-            if action in video_dates:
-                date = video_dates[action]
-            elif action.startswith('get_video_'):
-                # Извлекаем дату из действия вида get_video_25 мая
-                date = action.replace('get_video_', '')
-            else:
-                # Если дата неизвестна, используем название действия
-                date = action.replace('get_', '').replace('_video', '').replace('video_', '')
-            
-            # Добавляем действие в группу по дате
-            if date not in date_groups:
-                date_groups[date] = []
-                date_actions[date] = []
-            
-            date_groups[date].append((action, count))
-            date_actions[date].append(action)
-        
-        # Жестко задаем порядок отображения дат
-        ordered_dates = ['18 мая', '22 мая', '25 мая']
+        # Устанавливаем соответствие по умолчанию для основных действий, если не найдено в базе
+        if 'get_latest_video' not in action_to_date:
+            action_to_date['get_latest_video'] = '25 мая'
+        if 'get_previous_video' not in action_to_date:
+            action_to_date['get_previous_video'] = '22 мая'
         
         # Создаем словарь для хранения действий по датам
         date_to_actions = {
@@ -1580,18 +1444,33 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             '25 мая': []
         }
         
-        # Распределяем действия по датам на основе их названий
+        # Распределяем действия по датам на основе данных из базы
         for action, _ in video_actions:
-            # Действия для 25 мая
-            if action == 'get_latest_video' or action == 'get_video_25 мая' or '25 мая' in action:
-                date_to_actions['25 мая'].append(action)
-            # Действия для 22 мая
-            elif action == 'get_previous_video' or action == 'get_video_22 мая' or '22 мая' in action:
-                date_to_actions['22 мая'].append(action)
-            # Действия для 18 мая (включая get_video_2, если оно есть)
-            elif action == 'get_video_2' or action == 'get_video_18 мая' or '18 мая' in action:
-                date_to_actions['18 мая'].append(action)
-            
+            # Если у нас есть информация о дате для этого действия из базы
+            if action in action_to_date:
+                date = action_to_date[action]
+                if date in date_to_actions:
+                    date_to_actions[date].append(action)
+            # Если нет информации из базы, используем логику по умолчанию
+            else:
+                # Действия для 25 мая
+                if action == 'get_latest_video' or action == 'get_video_25 мая' or '25 мая' in action:
+                    date_to_actions['25 мая'].append(action)
+                # Действия для 22 мая
+                elif action == 'get_previous_video' or action == 'get_video_22 мая' or '22 мая' in action:
+                    date_to_actions['22 мая'].append(action)
+                # Действия для 18 мая
+                elif action == 'get_video_2' or action == 'get_video_18 мая' or '18 мая' in action:
+                    date_to_actions['18 мая'].append(action)
+        
+        # Добавляем фиктивное действие для 18 мая, если нет действий, чтобы всегда показывать эту дату
+        if not date_to_actions['18 мая']:
+            video_actions.append(('get_video_18 мая', 0))
+            date_to_actions['18 мая'].append('get_video_18 мая')
+        
+        # Жестко задаем порядок отображения дат
+        ordered_dates = ['18 мая', '22 мая', '25 мая']
+        
         # Обрабатываем каждую дату в заданном порядке
         for date in ordered_dates:
             # Получаем список действий для этой даты
@@ -1665,15 +1544,13 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                 
                 # Добавляем пустую строку после каждой группы
                 stats_text += "\n"
-
-            
-
         
         # Send statistics
         update.message.reply_text(stats_text)
         log_action(user_id, 'show_stats', 'admin_command')
         
-        # Закрываем соединение с базой данных после выполнения всех операций
+        # Close database connection
+        cursor.close()
         conn.close()
     except Exception as e:
         error_message = "Ошибка при получении статистики: " + str(e)
@@ -1686,9 +1563,6 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                 conn.close()
         except:
             pass
-
-
-def get_previous_video(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = user.id
     username = user.username

@@ -1725,6 +1725,56 @@ def make_admin(update: Update, context: CallbackContext) -> None:
     
     conn.close()
 
+def show_user_lists(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        conn, db_type = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get list of administrators
+        if db_type == 'postgres':
+            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = TRUE ORDER BY username")
+        else:
+            cursor.execute("SELECT username, user_id FROM users WHERE is_admin = 1 ORDER BY username")
+        admins_list = cursor.fetchall()
+        
+        # Get list of users who started the bot
+        cursor.execute("SELECT DISTINCT u.username, l.user_id FROM logs l JOIN users u ON l.user_id = u.user_id ORDER BY u.username")
+        active_users = cursor.fetchall()
+        
+        conn.close()
+        
+        # Format the message
+        message_text = "Списки пользователей\n\n"
+        
+        # Add list of administrators
+        message_text += "Администраторы:\n"
+        for admin in admins_list:
+            username, admin_id = admin
+            admin_display = "@" + username if username else "ID: " + str(admin_id)
+            message_text += "- " + admin_display + "\n"
+        message_text += "\n"
+        
+        # Add list of active users
+        message_text += "Пользователи, запустившие бота:\n"
+        for user in active_users:
+            username, user_id = user
+            user_display = "@" + username if username else "ID: " + str(user_id)
+            message_text += "- " + user_display + "\n"
+        
+        # Send the message
+        update.message.reply_text(message_text)
+        log_action(user_id, 'show_user_lists', 'admin_command')
+    except Exception as e:
+        error_message = "Ошибка при получении списков пользователей: " + str(e)
+        update.message.reply_text(error_message)
+        print("Error in show_user_lists: " + str(e))
+
 def main() -> None:
     # Initialize database with all required tables
     try:
@@ -1768,6 +1818,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("initdb", init_db_command))
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
     dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
+    dispatcher.add_handler(CommandHandler("userlists", show_user_lists))
     
     # Register button update command handlers
     dispatcher.add_handler(CommandHandler("button1", update_button))

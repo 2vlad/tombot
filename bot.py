@@ -1744,12 +1744,21 @@ def show_user_lists(update: Update, context: CallbackContext) -> None:
         admins_list = cursor.fetchall()
         
         # Get list of users who started the bot
-        cursor.execute("""
-            SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
-            FROM logs l 
-            JOIN users u ON l.user_id = u.user_id 
-            ORDER BY COALESCE(u.username, u.first_name, '')
-        """)
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
+                FROM logs l 
+                JOIN users u ON l.user_id = u.user_id 
+                ORDER BY u.username NULLS LAST, u.first_name NULLS LAST, u.user_id
+            """)
+        else:
+            # SQLite не поддерживает NULLS LAST, используем более простой запрос
+            cursor.execute("""
+                SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
+                FROM logs l 
+                JOIN users u ON l.user_id = u.user_id 
+                ORDER BY u.username, u.first_name, u.user_id
+            """)
         active_users = cursor.fetchall()
         
         conn.close()

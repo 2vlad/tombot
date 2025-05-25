@@ -1414,8 +1414,6 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             """)
         previous_video_users = cursor.fetchall()
         
-        conn.close()
-        
         # Format basic statistics with simple string concatenation
         stats_text = "Статистика бота\n\n"
         stats_text += "Всего пользователей: " + str(total_users) + "\n"
@@ -1543,10 +1541,20 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         # Send statistics
         update.message.reply_text(stats_text)
         log_action(user_id, 'show_stats', 'admin_command')
+        
+        # Закрываем соединение с базой данных после выполнения всех операций
+        conn.close()
     except Exception as e:
         error_message = "Ошибка при получении статистики: " + str(e)
         update.message.reply_text(error_message)
         print("Error in show_stats: " + str(e))
+        
+        # Закрываем соединение с базой данных в случае ошибки, если оно еще открыто
+        try:
+            if conn:
+                conn.close()
+        except:
+            pass
 
 
 def get_previous_video(update: Update, context: CallbackContext) -> None:

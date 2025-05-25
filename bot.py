@@ -1435,42 +1435,110 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             stats_text += "- " + admin_display + "\n"
         stats_text += "\n"
         
-        # Add statistics for latest video with list of users
-        stats_text += "Запись занятия 18 мая получили: " + str(latest_video_unique_users) + "\n"
-        for user in latest_video_users:
-            username, user_id, first_name, last_name = user
-            # Формируем отображаемое имя пользователя
-            if username and username != 'admin':
-                user_display = "@" + username
-                # Добавляем имя пользователя, если оно есть
-                if first_name:
-                    full_name = first_name + (" " + last_name if last_name else "")
-                    user_display += f" ({full_name})"
-            elif first_name:
-                full_name = first_name + (" " + last_name if last_name else "")
-                user_display = full_name + f" (ID: {user_id})"
-            else:
-                user_display = "ID: " + str(user_id)
-            stats_text += "- " + user_display + "\n"
-        stats_text += "\n"
+        # Получаем информацию о всех доступных записях занятий
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT action, COUNT(DISTINCT user_id) as count
+                FROM logs
+                WHERE action LIKE 'get_%_video' OR action LIKE 'get_video_%'
+                GROUP BY action
+                ORDER BY action
+            """)
+        else:
+            cursor.execute("""
+                SELECT action, COUNT(DISTINCT user_id) as count
+                FROM logs
+                WHERE action LIKE 'get_%_video' OR action LIKE 'get_video_%'
+                GROUP BY action
+                ORDER BY action
+            """)
         
-        # Add statistics for previous video with list of users
-        stats_text += "Запись занятия 22 мая получили: " + str(previous_video_unique_users) + "\n"
-        for user in previous_video_users:
-            username, user_id, first_name, last_name = user
-            # Формируем отображаемое имя пользователя
-            if username and username != 'admin':
-                user_display = "@" + username
-                # Добавляем имя пользователя, если оно есть
-                if first_name:
-                    full_name = first_name + (" " + last_name if last_name else "")
-                    user_display += f" ({full_name})"
-            elif first_name:
-                full_name = first_name + (" " + last_name if last_name else "")
-                user_display = full_name + f" (ID: {user_id})"
+        video_actions = cursor.fetchall()
+        
+        # Получаем информацию о датах занятий из базы данных или из логов
+        # Сначала проверим, есть ли таблица videos
+        video_dates = {}
+        try:
+            if db_type == 'postgres':
+                cursor.execute("SELECT to_regclass('public.videos')")
             else:
-                user_display = "ID: " + str(user_id)
-            stats_text += "- " + user_display + "\n"
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='videos'")
+            
+            table_exists = cursor.fetchone()[0] is not None
+            
+            if table_exists:
+                # Получаем даты занятий из таблицы videos
+                cursor.execute("SELECT title, upload_date FROM videos ORDER BY upload_date DESC")
+                videos_info = cursor.fetchall()
+                
+                # Создаем маппинг для дат занятий
+                for i, (title, date) in enumerate(videos_info):
+                    if i == 0:
+                        video_dates['get_latest_video'] = date
+                    elif i == 1:
+                        video_dates['get_previous_video'] = date
+                    else:
+                        video_dates[f'get_video_{i}'] = date
+        except Exception as e:
+            print(f"Ошибка при получении дат занятий: {e}")
+        
+        # Если не удалось получить даты из базы, используем стандартные значения
+        if 'get_latest_video' not in video_dates:
+            video_dates['get_latest_video'] = '25 мая'
+        if 'get_previous_video' not in video_dates:
+            video_dates['get_previous_video'] = '22 мая'
+        if 'get_video_2' not in video_dates and 'get_video_2' in [action for action, _ in video_actions]:
+            video_dates['get_video_2'] = '18 мая'
+        
+        # Добавляем статистику для каждого видео
+        for action, count in video_actions:
+            # Определяем дату занятия
+            if action in video_dates:
+                date = video_dates[action]
+            else:
+                # Если дата неизвестна, используем название действия
+                date = action.replace('get_', '').replace('_video', '').replace('video_', '')
+            
+            # Получаем список пользователей, которые получили это видео
+            if db_type == 'postgres':
+                cursor.execute("""
+                    SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                    FROM logs l
+                    LEFT JOIN users u ON l.user_id = u.user_id
+                    WHERE l.action = %s 
+                    ORDER BY l.username
+                """, (action,))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
+                    FROM logs l
+                    LEFT JOIN users u ON l.user_id = u.user_id
+                    WHERE l.action = ? 
+                    ORDER BY l.username
+                """, (action,))
+            
+            video_users = cursor.fetchall()
+            
+            # Добавляем статистику для этого видео
+            stats_text += f"Запись занятия {date} получили: {count}\n"
+            
+            for user in video_users:
+                username, user_id, first_name, last_name = user
+                # Формируем отображаемое имя пользователя
+                if username and username != 'admin':
+                    user_display = "@" + username
+                    # Добавляем имя пользователя, если оно есть
+                    if first_name:
+                        full_name = first_name + (" " + last_name if last_name else "")
+                        user_display += f" ({full_name})"
+                elif first_name:
+                    full_name = first_name + (" " + last_name if last_name else "")
+                    user_display = full_name + f" (ID: {user_id})"
+                else:
+                    user_display = "ID: " + str(user_id)
+                stats_text += "- " + user_display + "\n"
+            
+            stats_text += "\n"
         
         # Send statistics
         update.message.reply_text(stats_text)

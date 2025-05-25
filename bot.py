@@ -2009,14 +2009,66 @@ global_updater = None
 def shutdown_bot(signal_number=None, frame=None):
     print("Получен сигнал завершения. Корректно завершаем работу бота...")
     global global_updater
+    
+    # Удаляем файл блокировки
+    remove_lock_file()
+    
     if global_updater:
         print("Останавливаем бота...")
         global_updater.stop()
         print("Бот остановлен.")
     sys.exit(0)
 
+# Путь к файлу блокировки
+LOCK_FILE = '/tmp/tombot_lock'
+
+# Функция для проверки и создания файла блокировки
+def check_lock_file():
+    # Проверяем, существует ли файл блокировки
+    if os.path.exists(LOCK_FILE):
+        try:
+            # Проверяем время создания файла
+            file_time = os.path.getmtime(LOCK_FILE)
+            current_time = time.time()
+            
+            # Если файл старше 1 часа, удаляем его (считаем, что предыдущий процесс завис)
+            if current_time - file_time > 3600:  # 3600 секунд = 1 час
+                os.remove(LOCK_FILE)
+                logger.warning(f'Удален устаревший файл блокировки ({current_time - file_time:.1f} сек. назад)')
+            else:
+                # Если файл свежий, значит другой экземпляр бота уже запущен
+                logger.error(f'Обнаружен файл блокировки ({current_time - file_time:.1f} сек. назад). Возможно, другой экземпляр бота уже запущен.')
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f'Ошибка при проверке файла блокировки: {e}')
+            # Удаляем файл блокировки в случае ошибки
+            try:
+                os.remove(LOCK_FILE)
+            except:
+                pass
+    
+    # Создаем новый файл блокировки
+    try:
+        with open(LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        logger.info(f'Создан файл блокировки: {LOCK_FILE}')
+    except Exception as e:
+        logger.error(f'Ошибка при создании файла блокировки: {e}')
+
+# Функция для удаления файла блокировки при завершении работы бота
+def remove_lock_file():
+    try:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+            logger.info(f'Файл блокировки удален: {LOCK_FILE}')
+    except Exception as e:
+        logger.error(f'Ошибка при удалении файла блокировки: {e}')
+
 def main() -> None:
     global global_updater
+    
+    # Проверяем и создаем файл блокировки
+    check_lock_file()
     
     # Регистрируем обработчики сигналов для корректного завершения работы
     signal.signal(signal.SIGINT, shutdown_bot)  # Ctrl+C
@@ -2075,10 +2127,23 @@ def main() -> None:
     # Register message handler
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
     
+    # Добавляем обработчик ошибок для обработки конфликтов
+    def error_handler(update, context):
+        error = context.error
+        logger.error(f'Ошибка при обработке обновления: {error}')
+        
+        # Проверяем, является ли ошибка конфликтом
+        if 'Conflict' in str(error):
+            logger.warning('Обнаружен конфликт с другим экземпляром бота. Завершаем работу...')
+            shutdown_bot()
+    
+    # Регистрируем обработчик ошибок
+    dispatcher.add_error_handler(error_handler)
+    
     # Start the Bot with error handling
     try:
-        # Увеличиваем время между повторными попытками при ошибках
-        updater.start_polling(poll_interval=1.0, timeout=30, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        # Увеличиваем время между повторными попытками при ошибках и очищаем очередь обновлений
+        updater.start_polling(poll_interval=1.0, timeout=30, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES, clean=True)
         
         # Log that the bot has started
         logger.info('Bot started')

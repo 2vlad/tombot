@@ -1725,6 +1725,162 @@ def make_admin(update: Update, context: CallbackContext) -> None:
     
     conn.close()
 
+def whois(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+    
+    # Проверяем, что передан параметр
+    if not context.args:
+        update.message.reply_text("Укажите ID или @username пользователя. Например: /whois 123456789 или /whois @username")
+        return
+    
+    user_identifier = context.args[0]
+    
+    try:
+        conn, db_type = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Определяем, это ID или username
+        if user_identifier.isdigit():
+            # Это ID
+            if db_type == 'postgres':
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = %s) as log_count
+                    FROM users WHERE user_id = %s
+                """, (user_identifier, user_identifier))
+            else:
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = ?) as log_count
+                    FROM users WHERE user_id = ?
+                """, (user_identifier, user_identifier))
+        elif user_identifier.startswith('@'):
+            # Это username
+            username = user_identifier[1:]  # Убираем @
+            if db_type == 'postgres':
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = %s
+                """, (username,))
+            else:
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = ?
+                """, (username,))
+        else:
+            # Попробуем найти по username без @
+            if db_type == 'postgres':
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = %s
+                """, (user_identifier,))
+            else:
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = ?
+                """, (user_identifier,))
+        
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f"Пользователь {user_identifier} не найден.")
+            conn.close()
+            return
+        
+        user_id, username, first_name, last_name, registration_date, is_admin, log_count = user_data
+        
+        # Получаем дополнительную информацию о действиях пользователя
+        # Последние 5 действий
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT action, action_data, timestamp 
+                FROM logs 
+                WHERE user_id = %s 
+                ORDER BY timestamp DESC 
+                LIMIT 5
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT action, action_data, timestamp 
+                FROM logs 
+                WHERE user_id = ? 
+                ORDER BY timestamp DESC 
+                LIMIT 5
+            """, (user_id,))
+        
+        recent_actions = cursor.fetchall()
+        
+        # Получаем статистику по записям занятий
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = %s AND action = 'get_latest_video'
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = ? AND action = 'get_latest_video'
+            """, (user_id,))
+        latest_video_count = cursor.fetchone()[0]
+        
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = %s AND action = 'get_previous_video'
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = ? AND action = 'get_previous_video'
+            """, (user_id,))
+        previous_video_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        # Формируем сообщение с информацией о пользователе
+        message_text = f"Информация о пользователе:\n\n"
+        message_text += f"ID: {user_id}\n"
+        
+        if username:
+            message_text += f"Username: @{username}\n"
+        
+        if first_name or last_name:
+            full_name = (first_name or "") + (" " + last_name if last_name else "")
+            message_text += f"Имя: {full_name}\n"
+        
+        if registration_date:
+            message_text += f"Дата регистрации: {registration_date}\n"
+        
+        # Проверяем статус администратора
+        is_admin_text = "Да" if (is_admin == 1 or is_admin is True) else "Нет"
+        message_text += f"Администратор: {is_admin_text}\n"
+        
+        # Статистика активности
+        message_text += f"Всего действий: {log_count}\n"
+        message_text += f"Запросов записи 18 мая: {latest_video_count}\n"
+        message_text += f"Запросов записи 22 мая: {previous_video_count}\n\n"
+        
+        # Последние действия
+        if recent_actions:
+            message_text += "Последние действия:\n"
+            for action, action_data, timestamp in recent_actions:
+                message_text += f"- {timestamp}: {action}\n"
+        
+        update.message.reply_text(message_text)
+        log_action(user_id, 'whois', f'target:{user_identifier}')
+    except Exception as e:
+        error_message = f"Ошибка при получении информации о пользователе: {e}"
+        update.message.reply_text(error_message)
+        print(f"Error in whois: {e}")
+
 def show_user_lists(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -1855,6 +2011,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
     dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
     dispatcher.add_handler(CommandHandler("userlists", show_user_lists))
+    dispatcher.add_handler(CommandHandler("whois", whois))
     
     # Register button update command handlers
     dispatcher.add_handler(CommandHandler("button1", update_button))

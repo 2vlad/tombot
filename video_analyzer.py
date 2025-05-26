@@ -100,9 +100,9 @@ class VideoDownloadsAnalyzer:
                 conditions = []
                 params = []
                 
-                # Условие для action_data
-                action_data_pattern = f'Запись занятия {date}'
-                conditions.append("l.action_data = %s" if self.db_type == 'postgresql' else "l.action_data = ?")
+                # Условие для action_data - используем LIKE вместо точного совпадения
+                action_data_pattern = f'%Запись занятия {date}%'
+                conditions.append("l.action_data LIKE %s" if self.db_type == 'postgresql' else "l.action_data LIKE ?")
                 params.append(action_data_pattern)
                 
                 # Находим действия, соответствующие этой дате
@@ -115,16 +115,35 @@ class VideoDownloadsAnalyzer:
                     
                 where_clause = " OR ".join(f"({c})" for c in conditions)
                 
-                query = f"""
-                    SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                    FROM logs l
-                    LEFT JOIN users u ON l.user_id = u.user_id
-                    WHERE {where_clause}
-                    ORDER BY l.username
-                """
+                # Для PostgreSQL нужно использовать двойные кавычки для имен таблиц и столбцов
+                if self.db_type == 'postgresql':
+                    query = f"""
+                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                        FROM logs l
+                        LEFT JOIN users u ON l.user_id = u.user_id
+                        WHERE {where_clause}
+                        ORDER BY l.username
+                    """
+                else:
+                    query = f"""
+                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                        FROM logs l
+                        LEFT JOIN users u ON l.user_id = u.user_id
+                        WHERE {where_clause}
+                        ORDER BY l.username
+                    """
                 
-                self.cursor.execute(query, params)
-                users = self.cursor.fetchall()
+                # Добавляем отладочную информацию
+                logger.info(f"Запрос для даты {date}: {query}")
+                logger.info(f"Параметры: {params}")
+                
+                try:
+                    self.cursor.execute(query, params)
+                    users = self.cursor.fetchall()
+                    logger.info(f"Найдено пользователей для даты {date}: {len(users)}")
+                except Exception as e:
+                    logger.error(f"Ошибка при выполнении запроса для даты {date}: {e}")
+                    users = []
                 
                 # Формируем список пользователей для этой даты
                 for user_row in users:

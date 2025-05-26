@@ -56,6 +56,10 @@ class VideoDownloadsAnalyzer:
                 self.conn = sqlite3.connect(self.database)
                 logger.info(f"Подключено к SQLite базе данных: {self.database}")
             elif self.db_type == 'postgresql':
+                # Более подробное логирование параметров подключения
+                logger.info(f"Пытаемся подключиться к PostgreSQL: host={self.host}, db={self.database}, user={self.user}, port={self.port}")
+                
+                # Подключение к PostgreSQL
                 self.conn = psycopg2.connect(
                     host=self.host,
                     database=self.database,
@@ -63,14 +67,22 @@ class VideoDownloadsAnalyzer:
                     password=self.password,
                     port=self.port
                 )
-                logger.info(f"Подключено к PostgreSQL базе данных на {self.host}")
+                
+                # Проверка подключения
+                test_cursor = self.conn.cursor()
+                test_cursor.execute("SELECT current_database(), current_user")
+                db_info = test_cursor.fetchone()
+                test_cursor.close()
+                logger.info(f"Успешно подключено к PostgreSQL. БД: {db_info[0]}, пользователь: {db_info[1]}")
             else:
                 raise ValueError(f"Неподдерживаемый тип базы данных: {self.db_type}")
                 
             self.cursor = self.conn.cursor()
             return True
         except Exception as e:
+            import traceback
             logger.error(f"Ошибка подключения к базе данных: {e}")
+            logger.error(traceback.format_exc())
             return False
     
     def disconnect(self):
@@ -82,126 +94,122 @@ class VideoDownloadsAnalyzer:
             logger.info("Соединение с базой данных закрыто")
     
     def get_video_downloads(self):
-        """Получение данных о скачиваниях видео по датам
+        """Получить данные о загрузках видео по датам
         
         Returns:
             dict: словарь {дата: [список пользователей]}
         """
         if not self.conn:
             if not self.connect():
+                logger.error("Не удалось подключиться к базе данных")
                 return {}
         
         result = {date: [] for date in self.known_dates}
         
         try:
+            # Проверим структуру таблицы logs
+            try:
+                if self.db_type == 'postgresql':
+                    self.cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'logs'")
+                else:  # SQLite
+                    self.cursor.execute("PRAGMA table_info(logs)")
+                columns = self.cursor.fetchall()
+                logger.info(f"Столбцы таблицы logs: {columns}")
+                
+                # Проверим количество записей
+                self.cursor.execute("SELECT COUNT(*) FROM logs")
+                count = self.cursor.fetchone()[0]
+                logger.info(f"Всего записей в таблице logs: {count}")
+                
+                # Проверим типы действий
+                self.cursor.execute("SELECT DISTINCT action FROM logs LIMIT 20")
+                actions = self.cursor.fetchall()
+                logger.info(f"Примеры действий: {actions}")
+            except Exception as e:
+                logger.error(f"Ошибка при проверке структуры базы данных: {e}")
+            
             # Для каждой даты получаем список пользователей
             for date in self.known_dates:
-                # Формируем условия для WHERE clause
-                conditions = []
-                params = []
+                # Самый простой запрос, который работает в обоих типах баз данных
+                query = """
+                    SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                    FROM logs l
+                    LEFT JOIN users u ON l.user_id = u.user_id
+                    WHERE (l.action_data LIKE ? OR l.action LIKE ?)
+                    ORDER BY l.username
+                """
                 
-                # Условие для action_data - используем LIKE вместо точного совпадения
-                action_data_pattern = f'%Запись занятия {date}%'
-                conditions.append("l.action_data LIKE %s" if self.db_type == 'postgresql' else "l.action_data LIKE ?")
-                params.append(action_data_pattern)
+                params = [f'%{date}%', f'%{date}%']
                 
-                # Находим действия, соответствующие этой дате
-                specific_actions = [action for action, d in self.action_to_date_map.items() if d == date]
-                
-                if specific_actions:
-                    placeholders = ', '.join(['%s' if self.db_type == 'postgresql' else '?'] * len(specific_actions))
-                    conditions.append(f"l.action IN ({placeholders})")
-                    params.extend(specific_actions)
-                    
-                where_clause = " OR ".join(f"({c})" for c in conditions)
-                
-                # Для PostgreSQL нужно использовать двойные кавычки для имен таблиц и столбцов
-                # Используем простой запрос для надежности
+                # Для PostgreSQL нужно заменить ? на %s
                 if self.db_type == 'postgresql':
-                    # В PostgreSQL используем прямой запрос по action и action_data
-                    if date == '25 мая':
-                        query = """
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE l.action = 'get_video_25 мая' OR l.action_data LIKE '%Запись занятия 25 мая%'
-                            ORDER BY l.username
-                        """
-                        params = []
-                    elif date == '22 мая':
-                        query = """
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE l.action = 'get_video_22 мая' OR l.action = 'get_previous_video' OR l.action_data LIKE '%Запись занятия 22 мая%'
-                            ORDER BY l.username
-                        """
-                        params = []
-                    elif date == '18 мая':
-                        query = """
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE l.action = 'get_video_18 мая' OR l.action = 'get_latest_video' OR l.action_data LIKE '%Запись занятия 18 мая%'
-                            ORDER BY l.username
-                        """
-                        params = []
-                    else:
-                        # Для других дат используем общий запрос
-                        query = f"""
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE {where_clause}
-                            ORDER BY l.username
-                        """
-                else:
-                    query = f"""
-                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                        FROM logs l
-                        LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE {where_clause}
-                        ORDER BY l.username
-                    """
+                    query = query.replace('?', '%s')
                 
-                # Добавляем отладочную информацию
                 logger.info(f"Запрос для даты {date}: {query}")
-                if params:
-                    logger.info(f"Параметры: {params}")
+                logger.info(f"Параметры: {params}")
                 
                 try:
-                    if params:
-                        self.cursor.execute(query, params)
-                    else:
-                        self.cursor.execute(query)
+                    self.cursor.execute(query, params)
                     users = self.cursor.fetchall()
                     logger.info(f"Найдено пользователей для даты {date}: {len(users)}")
+                
+                    # Если ничего не нашли, попробуем еще один запрос
+                    if len(users) == 0:
+                        # Попробуем поискать по конкретным действиям
+                        if date == '25 мая':
+                            actions_to_check = ['get_video_25 мая', 'video_25']
+                        elif date == '22 мая':
+                            actions_to_check = ['get_video_22 мая', 'get_previous_video', 'video_22']
+                        elif date == '18 мая':
+                            actions_to_check = ['get_video_18 мая', 'get_latest_video', 'video_18']
+                        else:
+                            actions_to_check = []
+                        
+                        if actions_to_check:
+                            placeholders = ', '.join(['%s' if self.db_type == 'postgresql' else '?'] * len(actions_to_check))
+                            action_query = f"""
+                                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                                FROM logs l
+                                LEFT JOIN users u ON l.user_id = u.user_id
+                                WHERE l.action IN ({placeholders})
+                                ORDER BY l.username
+                            """
+                            
+                            logger.info(f"Дополнительный запрос для даты {date}: {action_query}")
+                            logger.info(f"Параметры: {actions_to_check}")
+                            
+                            try:
+                                self.cursor.execute(action_query, actions_to_check)
+                                more_users = self.cursor.fetchall()
+                                logger.info(f"Найдено дополнительных пользователей: {len(more_users)}")
+                                users.extend(more_users)
+                            except Exception as e:
+                                logger.error(f"Ошибка в дополнительном запросе: {e}")
+                
+                    # Формируем список пользователей для этой даты
+                    for user_row in users:
+                        username, user_id, first_name, last_name = user_row
+                        
+                        # Формируем отображаемое имя
+                        if username:
+                            display_name = f"@{username}"
+                        elif first_name:
+                            display_name = f"{first_name}{' ' + last_name if last_name else ''}"
+                        else:
+                            display_name = f"ID: {user_id}"
+                        
+                        # Добавляем информацию о пользователе
+                        user_info = {
+                            'user_id': user_id,
+                            'username': username,
+                            'first_name': first_name,
+                            'last_name': last_name,
+                            'display_name': display_name
+                        }
+                        
+                        result[date].append(user_info)
                 except Exception as e:
                     logger.error(f"Ошибка при выполнении запроса для даты {date}: {e}")
-                    users = []
-                
-                # Формируем список пользователей для этой даты
-                for user_row in users:
-                    username, user_id, first_name, last_name = user_row
-                    
-                    # Формируем отображаемое имя
-                    if username:
-                        display_name = f"@{username}"
-                    elif first_name:
-                        display_name = f"{first_name}{' ' + last_name if last_name else ''}"
-                    else:
-                        display_name = f"ID: {user_id}"
-                    
-                    # Добавляем информацию о пользователе
-                    user_info = {
-                        'user_id': user_id,
-                        'username': username,
-                        'first_name': first_name,
-                        'last_name': last_name,
-                        'display_name': display_name
-                    }
-                    
-                    result[date].append(user_info)
             
             return result
         except Exception as e:

@@ -1378,13 +1378,39 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         stats_text += "\n"
 
         # Используем VideoDownloadsAnalyzer для получения статистики по видео
-        # Создаем экземпляр анализатора
+        print(f"Тип базы данных: {db_type}")
+        
+        # Создаем экземпляр анализатора с правильными параметрами подключения
         if db_type == 'postgres':
-            # Для PostgreSQL
-            analyzer = VideoDownloadsAnalyzer(
-                db_type='postgresql',
-                database='filmschool'  # Имя базы данных может отличаться
-            )
+            # Получаем параметры подключения из переменных окружения
+            import os
+            import dj_database_url
+            
+            database_url = os.environ.get('DATABASE_URL')
+            print(f"DATABASE_URL: {database_url}")
+            
+            if database_url:
+                config = dj_database_url.parse(database_url)
+                analyzer = VideoDownloadsAnalyzer(
+                    db_type='postgresql',
+                    host=config['HOST'],
+                    database=config['NAME'],
+                    user=config['USER'],
+                    password=config['PASSWORD'],
+                    port=config['PORT']
+                )
+                print(f"Создан анализатор с параметрами: {config['HOST']}, {config['NAME']}, {config['USER']}")
+            else:
+                print("DATABASE_URL не найден, используем значения по умолчанию")
+                # Используем значения по умолчанию
+                analyzer = VideoDownloadsAnalyzer(
+                    db_type='postgresql',
+                    host='localhost',
+                    database='postgres',
+                    user='postgres',
+                    password='',
+                    port=5432
+                )
         else:
             # Для SQLite
             analyzer = VideoDownloadsAnalyzer(

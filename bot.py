@@ -1430,7 +1430,17 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                 
                 # Добавляем список пользователей
                 for user in users:
-                    stats_text += f"- {user['display_name']}\n"
+                    # Проверяем, есть ли полное имя из CSV
+                    if 'full_name_from_csv' in user and user['full_name_from_csv']:
+                        # Если есть полное имя, добавляем его к никнейму
+                        if user['username']:
+                            stats_text += f"- @{user['username']} ({user['full_name_from_csv']})\n"
+                        else:
+                            # Используем имя из CSV без никнейма
+                            stats_text += f"- {user['full_name_from_csv']}\n"
+                    else:
+                        # Используем стандартное отображение
+                        stats_text += f"- {user['display_name']}\n"
                 
                 stats_text += "\n"
         finally:

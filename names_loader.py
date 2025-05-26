@@ -30,12 +30,21 @@ class NamesLoader:
                         full_name = row[1].strip()
                         telegram = row[2].strip()
                         
-                        # Если ник начинается с @, используем его, иначе пропускаем
-                        if telegram.startswith('@'):
-                            # Удаляем @ для сравнения
-                            username = telegram[1:].strip().lower()
-                            self.telegram_to_name[username] = full_name
-                            logger.debug(f"Загружено соответствие: {username} -> {full_name}")
+                        # Сохраняем все варианты никнейма для лучшего поиска
+                        if telegram:
+                            # 1. Сохраняем оригинальный никнейм как есть
+                            self.telegram_to_name[telegram.lower()] = full_name
+                            
+                            # 2. Сохраняем без @ для варианта без него
+                            if telegram.startswith('@'):
+                                username_without_at = telegram[1:].strip().lower()
+                                self.telegram_to_name[username_without_at] = full_name
+                                logger.debug(f"Загружено соответствие: {telegram} / {username_without_at} -> {full_name}")
+                            # 3. Сохраняем с @ для варианта с ним
+                            elif not telegram.startswith('@'):
+                                username_with_at = '@' + telegram.lower()
+                                self.telegram_to_name[username_with_at] = full_name
+                                logger.debug(f"Загружено соответствие: {telegram} / {username_with_at} -> {full_name}")
                             
             logger.info(f"Загружено {len(self.telegram_to_name)} соответствий имен")
         except Exception as e:

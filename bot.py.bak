@@ -2,15 +2,24 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import sqlite3
 import os
 import time
+import re
+import random
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, ParseMode, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
 
-# Импортируем функции для работы с базой данных
-from db_utils import setup_database, log_action, is_user_authorized, is_admin, execute_query, get_connection, is_postgres_connection
+# Импортируем модуль для работы с базой данных
+from db_utils import setup_database, get_db_connection, load_buttons, save_button
+
+# Импортируем функцию инициализации базы данных
+try:
+    from init_db import init_database
+except ImportError:
+    print("Модуль init_db.py не найден, инициализация базы данных не будет выполнена")
 
 # Настройки бота - можно легко изменять
 
@@ -19,19 +28,25 @@ from db_utils import setup_database, log_action, is_user_authorized, is_admin, e
 
 # Первая кнопка (последнее занятие)
 BUTTON_LATEST_LESSON = 'Запись занятия 18 мая'
-MSG_LATEST_LESSON = '''Запись занятия от 18 мая:
-
-https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
+MSG_LATEST_LESSON = '''Запись занятия: https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
 
 Запись доступна в течение 7 дней.'''
 
 # Вторая кнопка (предыдущее занятие)
 BUTTON_PREVIOUS_LESSON = 'Запись занятия 22 мая'
-MSG_PREVIOUS_LESSON = '''Запись занятия от 22 мая:
-
-https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
+MSG_PREVIOUS_LESSON = '''Запись занятия: https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT_84cYb?usp=drive_link
 
 Запись доступна в течение 7 дней.'''
+
+# Третья кнопка (обновление клавиатуры)
+BUTTON_REFRESH = 'Обновить'
+
+# Словарь для хранения кнопок и сообщений
+BUTTONS = {
+    1: {'text': BUTTON_LATEST_LESSON, 'message': MSG_LATEST_LESSON},
+    2: {'text': BUTTON_PREVIOUS_LESSON, 'message': MSG_PREVIOUS_LESSON},
+    3: {'text': BUTTON_REFRESH, 'message': ''}
+}
 
 # Общие тексты сообщений
 MSG_WELCOME = 'Привет, я бот для занятий по авангардному кино. Чтобы получить запись прошедшего занятия, нажми кнопку. Записи хранятся 7 дней.'
@@ -44,42 +59,151 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Database setup
-# Используем функцию setup_database из модуля db_utils.py
-# Добавим только код для добавления администратора
-def setup_admin():
-    # Insert default admin if not exists
-    # Replace ADMIN_ID with the actual Telegram ID of the admin
-    admin_id = os.environ.get('ADMIN_ID', None)
-    if admin_id:
-        conn = get_connection()
-        cursor = conn.cursor()
-        is_postgres = is_postgres_connection(conn)
-        
-        # Разные плейсхолдеры для PostgreSQL и SQLite
-        placeholder = "%s" if is_postgres else "?"
-        
-        query = f"SELECT user_id FROM users WHERE user_id = {placeholder}"
-        cursor.execute(query, (int(admin_id),))
-        if not cursor.fetchone():
-            now = datetime.now(pytz.timezone('Europe/Moscow'))
-            # Форматируем время в зависимости от типа БД
-            timestamp = now if is_postgres else now.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Разные значения для is_admin в PostgreSQL и SQLite
-            is_admin_value = True if is_postgres else 1
-            
-            query = f"INSERT INTO users (user_id, is_admin, registration_date) VALUES ({placeholder}, {placeholder}, {placeholder})"
-            cursor.execute(query, (int(admin_id), is_admin_value, timestamp))
-            conn.commit()
-        conn.close()
+# Функция setup_database теперь в модуле db_utils
+# Администратор также добавляется в модуле db_utils
 
-# User authentication - используем функции из db_utils.py
-# Функции is_user_authorized и is_admin импортированы из db_utils.py
+# User authentication
+def is_user_authorized(user_id, username=None, phone_number=None):
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Проверяем по ID
+    if db_type == 'postgres':
+        cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+    else:
+        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    
+    # Если не нашли по ID, но есть username, проверяем по нему
+    if result is None and username:
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+    
+    # Если не нашли по ID и username, но есть phone_number, проверяем по нему
+    if result is None and phone_number:
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = %s", (phone_number,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = ?", (phone_number,))
+        result = cursor.fetchone()
+    
+    conn.close()
+    return result is not None
 
-# Log user actions with detailed information - используем функцию из db_utils.py
-# Функция log_action импортирована из db_utils.py
-    cursor.execute("SELECT username, first_name, last_name FROM users WHERE user_id = ?", (user_id,))
+def is_admin(user_id):
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    if db_type == 'postgres':
+        cursor.execute("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+    else:
+        cursor.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+    
+    result = cursor.fetchone()
+    conn.close()
+    
+    if db_type == 'postgres':
+        return result and result[0] is True
+    else:
+        return result and result[0] == 1
+
+# Функция загрузки настроек кнопок
+def load_buttons_from_db():
+    global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS
+    
+    # Сначала проверяем переменные окружения
+    button1_text = os.environ.get('BUTTON1_TEXT')
+    button1_message = os.environ.get('BUTTON1_MESSAGE')
+    button2_text = os.environ.get('BUTTON2_TEXT')
+    button2_message = os.environ.get('BUTTON2_MESSAGE')
+    
+    # Если переменные окружения установлены, используем их
+    if button1_text and button1_message:
+        BUTTON_LATEST_LESSON = button1_text
+        MSG_LATEST_LESSON = button1_message
+        BUTTONS[1]['text'] = BUTTON_LATEST_LESSON
+        BUTTONS[1]['message'] = MSG_LATEST_LESSON
+    
+    if button2_text and button2_message:
+        BUTTON_PREVIOUS_LESSON = button2_text
+        MSG_PREVIOUS_LESSON = button2_message
+        BUTTONS[2]['text'] = BUTTON_PREVIOUS_LESSON
+        BUTTONS[2]['message'] = MSG_PREVIOUS_LESSON
+    
+    # Затем загружаем настройки из базы данных
+    buttons_data = load_buttons()
+    
+    # Обновляем глобальные переменные из загруженных данных
+    if 1 in buttons_data:
+        BUTTON_LATEST_LESSON = buttons_data[1]['text']
+        MSG_LATEST_LESSON = buttons_data[1]['message']
+        BUTTONS[1]['text'] = BUTTON_LATEST_LESSON
+        BUTTONS[1]['message'] = MSG_LATEST_LESSON
+    
+    if 2 in buttons_data:
+        BUTTON_PREVIOUS_LESSON = buttons_data[2]['text']
+        MSG_PREVIOUS_LESSON = buttons_data[2]['message']
+        BUTTONS[2]['text'] = BUTTON_PREVIOUS_LESSON
+        BUTTONS[2]['message'] = MSG_PREVIOUS_LESSON
+    
+    # Если нет данных в базе, сохраняем значения по умолчанию
+    if not buttons_data:
+        save_button_to_db(1, BUTTON_LATEST_LESSON, MSG_LATEST_LESSON)
+        save_button_to_db(2, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON)
+
+def save_button_to_db(button_number, button_text, message_text):
+    # Используем функцию из модуля db_utils для сохранения настроек кнопок
+    save_button(button_number, button_text, message_text)
+    
+    # Также сохраняем настройки в переменные окружения для Railway
+    try:
+        # Для Railway мы не можем напрямую установить переменные окружения из кода
+        # Но мы можем записать их в файл .env, который можно использовать при локальной разработке
+        # и сообщить администратору, что нужно добавить эти переменные в Railway
+        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+        
+        # Создаем или обновляем файл .env
+        with open(env_file, 'a+') as f:
+            f.seek(0)  # Перемещаемся в начало файла для чтения
+            lines = f.readlines()
+            
+            # Создаем словарь существующих переменных
+            env_vars = {}
+            for line in lines:
+                if '=' in line:
+                    key, value = line.strip().split('=', 1)
+                    env_vars[key] = value
+            
+            # Обновляем переменные для кнопок
+            if button_number == 1:
+                env_vars['BUTTON1_TEXT'] = f'"{button_text}"'
+                env_vars['BUTTON1_MESSAGE'] = f'"{message_text}"'
+            elif button_number == 2:
+                env_vars['BUTTON2_TEXT'] = f'"{button_text}"'
+                env_vars['BUTTON2_MESSAGE'] = f'"{message_text}"'
+            
+            # Перезаписываем файл с обновленными переменными
+            f.seek(0)
+            f.truncate()
+            for key, value in env_vars.items():
+                f.write(f"{key}={value}\n")
+    except Exception as e:
+        logger.error(f"Error saving environment variables: {e}")
+
+# Log user actions with detailed information
+def log_action(user_id, action, action_data=None):
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get user information
+    if db_type == 'postgres':
+        cursor.execute("SELECT username, first_name, last_name FROM users WHERE user_id = %s", (user_id,))
+    else:
+        cursor.execute("SELECT username, first_name, last_name FROM users WHERE user_id = ?", (user_id,))
+    
     user_info = cursor.fetchone()
     
     if user_info:
@@ -91,10 +215,16 @@ def setup_admin():
     now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
     
     # Insert log with detailed information
-    cursor.execute(
-        "INSERT INTO logs (user_id, username, first_name, last_name, action, action_data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-        (user_id, username, first_name, last_name, action, action_data, now)
-    )
+    if db_type == 'postgres':
+        cursor.execute(
+            "INSERT INTO logs (user_id, username, first_name, last_name, action, action_data, timestamp) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
+            (user_id, username, first_name, last_name, action, action_data, now)
+        )
+    else:
+        cursor.execute(
+            "INSERT INTO logs (user_id, username, first_name, last_name, action, action_data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+            (user_id, username, first_name, last_name, action, action_data, now)
+        )
     
     conn.commit()
     conn.close()
@@ -107,12 +237,16 @@ def start(update: Update, context: CallbackContext) -> None:
     first_name = user.first_name
     last_name = user.last_name
     
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Проверяем, есть ли пользователь с таким username, но с временным ID (отрицательным)
     if username:
-        cursor.execute("SELECT user_id FROM users WHERE username = ? AND user_id < 0", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE username = %s AND user_id < 0", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE username = ? AND user_id < 0", (username,))
+        
         temp_user = cursor.fetchone()
         
         if temp_user:
@@ -120,10 +254,16 @@ def start(update: Update, context: CallbackContext) -> None:
             temp_user_id = temp_user[0]
             
             # Обновляем пользователя с временным ID на реальный
-            cursor.execute(
-                "UPDATE users SET user_id = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
-                (user_id, first_name, last_name, temp_user_id)
-            )
+            if db_type == 'postgres':
+                cursor.execute(
+                    "UPDATE users SET user_id = %s, first_name = %s, last_name = %s WHERE user_id = %s", 
+                    (user_id, first_name, last_name, temp_user_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE users SET user_id = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
+                    (user_id, first_name, last_name, temp_user_id)
+                )
             conn.commit()
             
             # Теперь пользователь авторизован
@@ -141,34 +281,62 @@ def start(update: Update, context: CallbackContext) -> None:
             return
     
     # Стандартная проверка авторизации
-    if is_user_authorized(user_id, username):
+    if is_user_authorized(user_id, username) or is_admin(user_id):
         # Обновляем информацию о пользователе
-        cursor.execute(
-            "UPDATE users SET username = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
-            (username, first_name, last_name, user_id)
-        )
+        if db_type == 'postgres':
+            cursor.execute(
+                "UPDATE users SET username = %s, first_name = %s, last_name = %s WHERE user_id = %s", 
+                (username, first_name, last_name, user_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE users SET username = ?, first_name = ?, last_name = ? WHERE user_id = ?", 
+                (username, first_name, last_name, user_id)
+            )
         conn.commit()
         
         keyboard = [
-            [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON]
+            [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON],
+            [BUTTON_REFRESH]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
+        # Проверяем, является ли пользователь администратором
+        welcome_message = MSG_WELCOME.format(first_name)
+        
+        # Добавляем информацию о правах администратора, если пользователь является администратором
+        if is_admin(user_id):
+            welcome_message += '''
+
+Вы имеете права администратора. Используйте /help для просмотра доступных команд.'''
+        
         update.message.reply_text(
-            MSG_WELCOME.format(first_name),
+            welcome_message,
             reply_markup=reply_markup
         )
         log_action(user_id, 'start', 'regular_start')
     else:
         # Сохраняем информацию о пользователе для возможного добавления администратором
         # Проверяем, есть ли информация о пользователе в таблице pending_users
-        cursor.execute("SELECT user_id FROM pending_users WHERE user_id = ?", (user_id,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE user_id = %s", (user_id,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE user_id = ?", (user_id,))
+            
         if not cursor.fetchone():
             # Добавляем пользователя в таблицу ожидающих
-            cursor.execute(
-                "INSERT OR REPLACE INTO pending_users (user_id, username, first_name, last_name, request_date) VALUES (?, ?, ?, ?, ?)", 
-                (user_id, username, first_name, last_name, datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S'))
-            )
+            now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+            
+            if db_type == 'postgres':
+                cursor.execute(
+                    "INSERT INTO pending_users (user_id, username, first_name, last_name, request_date) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET username = %s, first_name = %s, last_name = %s, request_date = %s", 
+                    (user_id, username, first_name, last_name, now, username, first_name, last_name, now)
+                )
+            else:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO pending_users (user_id, username, first_name, last_name, request_date) VALUES (?, ?, ?, ?, ?)", 
+                    (user_id, username, first_name, last_name, now)
+                )
             conn.commit()
         
         conn.close()
@@ -178,28 +346,60 @@ def start(update: Update, context: CallbackContext) -> None:
             'Пожалуйста, обратитесь к администратору киношколы для регистрации.'
         )
 
+def refresh_keyboard(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = user.id
+    username = user.username
+    
+    # Проверяем, что пользователь авторизован
+    if not (is_user_authorized(user_id, username) or is_admin(user_id)):
+        update.message.reply_text(MSG_NOT_AUTHORIZED)
+        return
+    
+    # Создаем клавиатуру с актуальными кнопками
+    keyboard = [
+        [BUTTON_LATEST_LESSON, BUTTON_PREVIOUS_LESSON],
+        [BUTTON_REFRESH]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
+    # Отправляем сообщение с обновленной клавиатурой
+    update.message.reply_text(
+        'Данные обновлены.',
+        reply_markup=reply_markup
+    )
+    
+    log_action(user_id, 'refresh_keyboard', 'keyboard_updated')
+
 def help_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = user.id
     username = user.username
     
-    if is_user_authorized(user_id, username):
+    if is_user_authorized(user_id, username) or is_admin(user_id):
         help_text = (
             'Доступные команды:\n'
             '/start - Начать работу с ботом\n'
-            '/help - Показать это сообщение\n\n'
+            '/help - Показать это сообщение\n'
+            '/refresh - Обновить кнопки\n\n'
             'Используйте кнопки для доступа к записям занятий.'
         )
         
         if is_admin(user_id):
             help_text += (
-                '\n\nКоманды администратора:\n'
-                '/adduser <user_id или @username> - Добавить нового пользователя\n'
-                '/removeuser <user_id или @username> - Удалить пользователя\n'
-                '/listusers - Показать список всех пользователей\n'
-                '/pendingusers - Показать список пользователей, запросивших доступ\n'
-                '/updatevideo <номер> <название> <ссылка> - Обновить ссылку на видео (1 - последнее, 2 - предыдущее)\n'
-                '/stats - Показать статистику использования бота'
+                '*Команды администратора:*\n'
+                '/adduser <user_id> - Добавить пользователя по ID\n'
+                '/addusers @user1 @user2 ... - Массовое добавление пользователей по никнеймам\n'
+                '/checkusers @user1 @user2 ... - Проверить наличие пользователей в базе данных\n'
+                '/diagnosedb - Диагностика базы данных\n'
+                '/initdb - Инициализация базы данных (создание таблиц)\n'
+                '/removeuser <user_id> - Удалить пользователя по ID\n'
+                '/makeadmin <user_id или @username> - Назначить пользователя администратором\n'
+                '/button1 "Текст кнопки" "URL" - Обновить текст и ссылку для кнопки 1\n'
+                '/button2 "Текст кнопки" "URL" - Обновить текст и ссылку для кнопки 2\n'
+                '/stats - Показать статистику использования бота\n'
+                '/users - Показать список пользователей\n'
+                '/pending - Показать список ожидающих подтверждения пользователей\n'
             )
         
         update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
@@ -216,13 +416,16 @@ def add_user(update: Update, context: CallbackContext) -> None:
         return
     
     if not context.args:
-        update.message.reply_text('Пожалуйста, укажите Telegram ID или @username пользователя.')
+        update.message.reply_text('Пожалуйста, укажите Telegram ID, @username или номер телефона пользователя.')
         return
     
     user_identifier = context.args[0]
     
-    # Проверяем, является ли идентификатор числом (ID) или именем пользователя
-    if user_identifier.isdigit():
+    # Добавляем отладочный вывод
+    update.message.reply_text(f'Получен идентификатор: {user_identifier}')
+    
+    # Проверяем, является ли идентификатор числом (ID), именем пользователя или номером телефона
+    if user_identifier.isdigit() and len(user_identifier) < 10:
         # Если это ID
         new_user_id = int(user_identifier)
         username = None
@@ -231,10 +434,14 @@ def add_user(update: Update, context: CallbackContext) -> None:
         username = user_identifier[1:]  # Убираем символ @
         
         # Проверяем, есть ли пользователь с таким именем в базе
-        conn = sqlite3.connect('filmschool.db')
+        conn, db_type = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+            
         existing_user = cursor.fetchone()
         
         if existing_user:
@@ -243,7 +450,11 @@ def add_user(update: Update, context: CallbackContext) -> None:
             return
         
         # Проверяем, есть ли пользователь в таблице pending_users
-        cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+            
         pending_user = cursor.fetchone()
         
         if pending_user:
@@ -251,7 +462,11 @@ def add_user(update: Update, context: CallbackContext) -> None:
             new_user_id = pending_user[0]
             
             # Получаем полную информацию о пользователе
-            cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users WHERE user_id = ?", (new_user_id,))
+            if db_type == 'postgres':
+                cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users WHERE user_id = %s", (new_user_id,))
+            else:
+                cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users WHERE user_id = ?", (new_user_id,))
+                
             user_data = cursor.fetchone()
             
             if user_data:
@@ -259,17 +474,28 @@ def add_user(update: Update, context: CallbackContext) -> None:
                 now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
                 
                 # Добавляем пользователя в авторизованные
-                cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (?, ?, ?, ?, ?)", 
-                              (user_id, username, first_name, last_name, now))
-                
-                # Удаляем из pending_users
-                cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (user_id,))
+                if db_type == 'postgres':
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (%s, %s, %s, %s, %s)", 
+                        (user_id, username, first_name, last_name, now)
+                    )
+                    
+                    # Удаляем из ожидающих
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (user_id,))
+                else:
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, first_name, last_name, registration_date) VALUES (?, ?, ?, ?, ?)", 
+                        (user_id, username, first_name, last_name, now)
+                    )
+                    
+                    # Удаляем из ожидающих
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (user_id,))
                 
                 conn.commit()
                 conn.close()
                 
                 update.message.reply_text(f'Пользователь @{username} (ID: {user_id}) успешно добавлен.')
-                log_action(user_id, 'add_user', f'user_id:{user_id}')
+                log_action(user_id, 'add_user', f'username:@{username}, user_id:{user_id}')
                 return
         
         # Если пользователь не найден в pending_users, добавляем его напрямую
@@ -289,8 +515,100 @@ def add_user(update: Update, context: CallbackContext) -> None:
         )
         log_action(user_id, 'add_user', f'username:@{username}')
         return
+    elif user_identifier.startswith('+') or (user_identifier.isdigit() and len(user_identifier) >= 10):
+        # Если это номер телефона (начинается с + или это число длиной от 10 цифр)
+        # Если номер не начинается с +, добавляем его
+        if not user_identifier.startswith('+'):
+            phone_number = '+' + user_identifier
+        else:
+            phone_number = user_identifier
+            
+        username = None
+        
+        # Добавляем отладочный вывод
+        update.message.reply_text(f'Обрабатываю номер телефона: {phone_number}')
+        
+        # Проверяем, есть ли пользователь с таким номером телефона в базе
+        conn, db_type = get_db_connection()
+        cursor = conn.cursor()
+        
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = %s", (phone_number,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE phone_number = ?", (phone_number,))
+            
+        existing_user = cursor.fetchone()
+        
+        if existing_user:
+            update.message.reply_text(f'Пользователь с номером {phone_number} уже зарегистрирован.')
+            conn.close()
+            return
+        
+        # Проверяем, есть ли пользователь в таблице pending_users
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE phone_number = %s", (phone_number,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE phone_number = ?", (phone_number,))
+            
+        pending_user = cursor.fetchone()
+        
+        if pending_user:
+            # Если пользователь уже взаимодействовал с ботом, добавляем его из pending_users
+            new_user_id = pending_user[0]
+            
+            # Получаем полную информацию о пользователе
+            if db_type == 'postgres':
+                cursor.execute("SELECT user_id, username, first_name, last_name, phone_number, request_date FROM pending_users WHERE user_id = %s", (new_user_id,))
+            else:
+                cursor.execute("SELECT user_id, username, first_name, last_name, phone_number, request_date FROM pending_users WHERE user_id = ?", (new_user_id,))
+                
+            user_data = cursor.fetchone()
+            
+            if user_data:
+                user_id_data, username_data, first_name, last_name, phone_number_data, _ = user_data
+                now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Добавляем пользователя в авторизованные
+                if db_type == 'postgres':
+                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, phone_number, registration_date) VALUES (%s, %s, %s, %s, %s, %s)", 
+                                   (user_id_data, username_data, first_name, last_name, phone_number_data, now))
+                    
+                    # Удаляем из pending_users
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (user_id_data,))
+                else:
+                    cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, phone_number, registration_date) VALUES (?, ?, ?, ?, ?, ?)", 
+                                   (user_id_data, username_data, first_name, last_name, phone_number_data, now))
+                    
+                    # Удаляем из pending_users
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (user_id_data,))
+                
+                conn.commit()
+                conn.close()
+                
+                update.message.reply_text(f'Пользователь с номером {phone_number} (ID: {user_id_data}) успешно добавлен.')
+                log_action(user_id, 'add_user', f'phone_number:{phone_number}, user_id:{user_id_data}')
+                return
+        
+        # Если пользователь не найден в pending_users, добавляем его напрямую
+        # Создаем временный ID (отрицательное число) - при первом взаимодействии с ботом он будет обновлен
+        temp_user_id = -int(time.time())  # Используем текущее время как временный ID
+        now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+        
+        if db_type == 'postgres':
+            cursor.execute("INSERT INTO users (user_id, phone_number, registration_date) VALUES (%s, %s, %s)", 
+                          (temp_user_id, phone_number, now))
+        else:
+            cursor.execute("INSERT INTO users (user_id, phone_number, registration_date) VALUES (?, ?, ?)", 
+                          (temp_user_id, phone_number, now))
+        
+        conn.commit()
+        conn.close()
+        
+        update.message.reply_text(f'Пользователь с номером {phone_number} успешно добавлен.')
+        log_action(user_id, 'add_user', f'phone_number:{phone_number}')
+        return
     else:
-        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
+        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID, @username или номер телефона пользователя.')
         return
     
     conn = sqlite3.connect('filmschool.db')
@@ -311,6 +629,155 @@ def add_user(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(f'Пользователь с ID {new_user_id} успешно добавлен.')
     log_action(user_id, 'add_user', f'user_id:{new_user_id}')
 
+def add_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    # Проверяем, что команду выполняет администратор
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Проверяем, что есть текст после команды
+    if not context.args and not update.message.text.split(' ', 1)[1:]:
+        update.message.reply_text('''Пожалуйста, укажите список никнеймов пользователей для добавления.
+
+Пример: `/addusers @user1 @user2 @user3`
+Или отправьте список никнеймов, каждый в новой строке.''', parse_mode=ParseMode.MARKDOWN)
+        return
+    
+    # Получаем текст после команды
+    if context.args:
+        # Если аргументы переданы через пробелы
+        usernames_text = ' '.join(context.args)
+    else:
+        # Если текст передан после команды
+        usernames_text = update.message.text.split(' ', 1)[1]
+    
+    # Разбиваем текст на строки и пробелы, удаляем пустые строки
+    usernames = [username.strip() for username in re.split(r'[\s\n]+', usernames_text) if username.strip()]
+    
+    # Проверяем формат никнеймов и удаляем @ если есть
+    clean_usernames = []
+    for username in usernames:
+        if username.startswith('@'):
+            clean_usernames.append(username[1:].lower())  # Удаляем символ @ и приводим к нижнему регистру
+        else:
+            clean_usernames.append(username.lower())  # Приводим к нижнему регистру
+    
+    if not clean_usernames:
+        update.message.reply_text('Не удалось найти допустимые никнеймы в вашем списке.')
+        return
+    
+    # Подключаемся к базе данных
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Статистика добавления
+    added_count = 0
+    already_exists_count = 0
+    not_found_count = 0
+    not_found_usernames = []
+    
+    # Проходим по всем никнеймам
+    for username in clean_usernames:
+        # Сначала проверяем, есть ли пользователь уже в таблице users по имени пользователя
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (username,))
+            
+        existing_user_by_name = cursor.fetchone()
+        
+        if existing_user_by_name:
+            # Пользователь уже существует в таблице users
+            already_exists_count += 1
+            print(f"Пользователь @{username} уже существует в таблице users")
+            continue
+        
+        # Проверяем, есть ли пользователь в таблице pending_users
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(%s)", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE LOWER(username) = LOWER(?)", (username,))
+            
+        pending_user = cursor.fetchone()
+        
+        if pending_user:
+            # Пользователь найден в ожидающих
+            pending_user_id = pending_user[0]
+            
+            # Проверяем, не существует ли уже такой пользователь в таблице users по ID
+            if db_type == 'postgres':
+                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (pending_user_id,))
+            else:
+                cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (pending_user_id,))
+                
+            existing_user = cursor.fetchone()
+            
+            if not existing_user:
+                # Добавляем пользователя в таблицу users
+                now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+                
+                if db_type == 'postgres':
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (%s, %s, %s, %s)", 
+                        (pending_user_id, username, now, False)
+                    )
+                    
+                    # Удаляем из ожидающих
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (pending_user_id,))
+                else:
+                    cursor.execute(
+                        "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (?, ?, ?, ?)", 
+                        (pending_user_id, username, now, 0)
+                    )
+                    
+                    # Удаляем из ожидающих
+                    cursor.execute("DELETE FROM pending_users WHERE user_id = ?", (pending_user_id,))
+                
+                added_count += 1
+                print(f"Добавлен пользователь @{username} из pending_users с ID {pending_user_id}")
+                log_action(user_id, 'add_user', f'username:@{username}, user_id:{pending_user_id}')
+            else:
+                already_exists_count += 1
+                print(f"Пользователь @{username} с ID {pending_user_id} уже существует в таблице users")
+        else:
+            # Пользователь не найден в ожидающих, добавляем его напрямую
+            # Создаем временный ID (отрицательное число) - при первом взаимодействии с ботом он будет обновлен
+            temp_user_id = -int(time.time()) - random.randint(1, 1000)  # Используем текущее время и случайное число как временный ID
+            now = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Добавляем пользователя в таблицу users
+            if db_type == 'postgres':
+                cursor.execute(
+                    "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (%s, %s, %s, %s)", 
+                    (temp_user_id, username, now, False)
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO users (user_id, username, registration_date, is_admin) VALUES (?, ?, ?, ?)", 
+                    (temp_user_id, username, now, 0)
+                )
+            
+            added_count += 1
+            print(f"Добавлен новый пользователь @{username} с временным ID {temp_user_id}")
+            log_action(user_id, 'add_user', f'username:@{username}, direct_add:true, temp_id:{temp_user_id}')
+    
+    conn.commit()
+    conn.close()
+    
+    # Формируем отчет
+    report = f"*Результаты добавления пользователей:*\n\n"
+    report += f"Добавлено новых пользователей: {added_count}\n"
+    report += f"Уже существуют в базе: {already_exists_count}\n"
+    report += f"Всего обработано пользователей: {len(clean_usernames)}"
+    
+    # Добавляем информацию о том, что пользователи добавлены и что нужно сделать дальше
+    report += "\n\nВсе пользователи успешно добавлены в базу данных."
+    report += "\nДля проверки используйте команду /checkusers с теми же пользователями."
+    
+    update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
+
 def remove_user(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -324,7 +791,7 @@ def remove_user(update: Update, context: CallbackContext) -> None:
     
     user_identifier = context.args[0]
     
-    conn = sqlite3.connect('filmschool.db')
+    conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
     # Определяем, является ли идентификатор числом (ID) или именем пользователя
@@ -338,13 +805,21 @@ def remove_user(update: Update, context: CallbackContext) -> None:
             conn.close()
             return
         
-        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (remove_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (remove_user_id,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (remove_user_id,))
+            
         if not cursor.fetchone():
             update.message.reply_text(f'Пользователь с ID {remove_user_id} не найден.')
             conn.close()
             return
         
-        cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (remove_user_id,))
+        else:
+            cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
+            
         conn.commit()
         conn.close()
         
@@ -356,23 +831,35 @@ def remove_user(update: Update, context: CallbackContext) -> None:
         username = user_identifier[1:]  # Убираем символ @
         
         # Находим пользователя по имени
-        cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+            
         user_data = cursor.fetchone()
         
         if not user_data:
             update.message.reply_text(f'Пользователь @{username} не найден.')
             conn.close()
             return
-        
+            
         remove_user_id, is_admin_flag = user_data
         
         # Проверяем, является ли пользователь администратором
-        if is_admin_flag == 1:
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
             update.message.reply_text('Невозможно удалить администратора.')
             conn.close()
             return
         
-        cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
+        if db_type == 'postgres':
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (remove_user_id,))
+        else:
+            cursor.execute("DELETE FROM users WHERE user_id = ?", (remove_user_id,))
         conn.commit()
         conn.close()
         
@@ -382,6 +869,91 @@ def remove_user(update: Update, context: CallbackContext) -> None:
     else:
         update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
         conn.close()
+
+def update_button(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Проверяем, что переданы все необходимые аргументы
+    if len(context.args) < 3:
+        update.message.reply_text(
+            '''Пожалуйста, укажите все необходимые параметры: 
+
+/button<номер> "<текст кнопки>" "<ссылка>"
+
+Например: /button1 "Запись занятия 19 мая" "https://drive.google.com/drive/folders/12j6-RCss8JyLqWwLV8pd1KidKT84cYb?usp=drivelink"'''
+        )
+        return
+    
+    try:
+        # Извлекаем номер кнопки из команды (например, /button1 -> 1)
+        command = update.message.text.split()[0]  # Получаем /button1
+        button_num = int(command.replace('/button', ''))
+        
+        if button_num not in [1, 2]:
+            raise ValueError("Номер кнопки должен быть 1 (последнее занятие) или 2 (предыдущее занятие)")
+        
+        # Получаем текст кнопки и ссылку
+        # Аргументы могут содержать пробелы и быть в кавычках, поэтому используем полный текст сообщения
+        full_text = update.message.text
+        
+        # Находим текст в кавычках
+        import re
+        matches = re.findall(r'"([^"]*)"', full_text)
+        
+        if len(matches) < 2:
+            raise ValueError("Пожалуйста, укажите текст кнопки и ссылку в кавычках")
+        
+        button_text = matches[0]
+        button_url = matches[1]
+        
+        # Создаем новый текст сообщения с указанной ссылкой
+        # Согласно предпочтениям пользователя, URL должен идти сразу после двоеточия
+        # Используем явные символы новой строки вместо многострочной строки
+        message_text = "Запись занятия: " + button_url + "\n\nЗапись доступна в течение 7 дней."
+        
+        # Обновляем глобальные переменные в зависимости от номера кнопки
+        global BUTTON_LATEST_LESSON, MSG_LATEST_LESSON, BUTTON_PREVIOUS_LESSON, MSG_PREVIOUS_LESSON, BUTTONS
+        
+        if button_num == 1:
+            BUTTON_LATEST_LESSON = button_text
+            MSG_LATEST_LESSON = message_text
+        else:  # button_num == 2
+            BUTTON_PREVIOUS_LESSON = button_text
+            MSG_PREVIOUS_LESSON = message_text
+        
+        # Обновляем словарь кнопок
+        BUTTONS[button_num] = {'text': button_text, 'message': message_text}
+        
+        # Сохраняем изменения в базе данных
+        save_button_to_db(button_num, button_text, message_text)
+        
+        # Формируем сообщение об успехе
+        success_message = 'Готово. Нажми «Обновить».'
+        
+        update.message.reply_text(success_message)
+        log_action(user_id, 'update_button', f'button_num:{button_num}, text:"{button_text}", url:{button_url}')
+        
+    except ValueError as e:
+        # Формируем понятное сообщение об ошибке
+        error_message = f'''❌ Ошибка при обновлении кнопки:
+
+{str(e)}
+
+Пожалуйста, проверьте формат команды:
+/button<номер> "<текст кнопки>" "<ссылка>"'''
+        update.message.reply_text(error_message)
+    except Exception as e:
+        # Формируем детальное сообщение о неожиданной ошибке
+        unexpected_error = f'''⚠️ Неожиданная ошибка при обновлении кнопки:
+
+{str(e)}
+
+Пожалуйста, свяжитесь с администратором или попробуйте еще раз.'''
+        update.message.reply_text(unexpected_error)
 
 def update_video(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -418,7 +990,7 @@ def update_video(update: Update, context: CallbackContext) -> None:
             # Less than 2 videos in database, add new ones
             for i in range(2 - len(videos)):
                 cursor.execute("INSERT INTO videos (title, url, upload_date) VALUES (?, ?, ?)", 
-                              ("Новое занятие", "https://example.com", now))
+                               ("Новое занятие", "https://example.com", now))
         
         # Get videos again after possible insertion
         cursor.execute("SELECT id FROM videos ORDER BY upload_date DESC LIMIT 2")
@@ -427,7 +999,7 @@ def update_video(update: Update, context: CallbackContext) -> None:
         # Update the selected video
         video_id = videos[video_num - 1][0]
         cursor.execute("UPDATE videos SET title = ?, url = ?, upload_date = ? WHERE id = ?", 
-                      (title, url, now, video_id))
+                       (title, url, now, video_id))
         
         conn.commit()
         conn.close()
@@ -476,6 +1048,278 @@ def show_actions(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(actions_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_actions', 'admin_command')
 
+def init_db_command(update: Update, context: CallbackContext) -> None:
+    """Инициализация базы данных через команду бота"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    try:
+        # Вызываем функцию инициализации базы данных
+        from init_db import init_database
+        init_database()
+        update.message.reply_text("✅ База данных успешно инициализирована! Все необходимые таблицы созданы.")
+    except Exception as e:
+        update.message.reply_text(f"❌ Ошибка при инициализации базы данных: {str(e)}")
+
+def diagnose_db(update: Update, context: CallbackContext) -> None:
+    """Диагностика базы данных для проверки структуры и наличия пользователей"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Подключаемся к базе данных
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Получаем информацию о таблицах
+    if db_type == 'postgres':
+        cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    else:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    
+    tables = cursor.fetchall()
+    table_names = [table[0] for table in tables]
+    
+    # Получаем информацию о структуре таблицы users
+    if 'users' in table_names:
+        if db_type == 'postgres':
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")
+        else:
+            cursor.execute("PRAGMA table_info(users)")
+            
+        columns_info = cursor.fetchall()
+        
+        if db_type == 'postgres':
+            columns = [col[0] for col in columns_info]
+        else:
+            columns = [col[1] for col in columns_info]  # SQLite returns (id, name, type, notnull, default, pk)
+        
+        # Проверяем наличие колонки username
+        has_username_column = 'username' in columns
+        
+        # Получаем количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM users")
+        users_count = cursor.fetchone()[0]
+        
+        # Получаем первых 5 пользователей
+        cursor.execute("SELECT user_id, username FROM users LIMIT 5")
+        sample_users = cursor.fetchall()
+    else:
+        has_username_column = False
+        users_count = 0
+        sample_users = []
+    
+    # Получаем информацию о структуре таблицы pending_users
+    if 'pending_users' in table_names:
+        if db_type == 'postgres':
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'pending_users'")
+        else:
+            cursor.execute("PRAGMA table_info(pending_users)")
+            
+        columns_info = cursor.fetchall()
+        
+        if db_type == 'postgres':
+            pending_columns = [col[0] for col in columns_info]
+        else:
+            pending_columns = [col[1] for col in columns_info]  # SQLite returns (id, name, type, notnull, default, pk)
+        
+        # Проверяем наличие колонки username
+        has_pending_username_column = 'username' in pending_columns
+        
+        # Получаем количество пользователей
+        cursor.execute("SELECT COUNT(*) FROM pending_users")
+        pending_users_count = cursor.fetchone()[0]
+    else:
+        has_pending_username_column = False
+        pending_users_count = 0
+    
+    conn.close()
+    
+    # Формируем отчет
+    report = f"*Диагностика базы данных:*\n\n"
+    report += f"Тип базы данных: {db_type}\n"
+    report += f"Таблицы в базе: {', '.join(table_names)}\n\n"
+    
+    if 'users' in table_names:
+        report += f"*Таблица users:*\n"
+        report += f"Колонки: {', '.join(columns)}\n"
+        report += f"Колонка username: {'Есть' if has_username_column else 'Отсутствует'}\n"
+        report += f"Количество пользователей: {users_count}\n"
+        
+        if sample_users:
+            report += "\nПримеры пользователей:\n"
+            for user in sample_users:
+                user_id, username = user
+                report += f"- ID: {user_id}, Username: {username or 'Нет'}\n"
+    else:
+        report += "*Таблица users не найдена*\n"
+    
+    if 'pending_users' in table_names:
+        report += f"\n*Таблица pending_users:*\n"
+        report += f"Колонки: {', '.join(pending_columns)}\n"
+        report += f"Колонка username: {'Есть' if has_pending_username_column else 'Отсутствует'}\n"
+        report += f"Количество пользователей: {pending_users_count}\n"
+    else:
+        report += "\n*Таблица pending_users не найдена*\n"
+    
+    update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'diagnose_db', 'admin_command')
+
+def check_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Получаем список пользователей для проверки
+    if not context.args:
+        update.message.reply_text('Пожалуйста, укажите список никнеймов для проверки.')
+        return
+    
+    # Получаем текст после команды
+    usernames_text = ' '.join(context.args)
+    
+    # Разбиваем текст на строки и пробелы, удаляем пустые строки
+    usernames = [username.strip() for username in re.split(r'[\s\n]+', usernames_text) if username.strip()]
+    
+    # Проверяем формат никнеймов и удаляем @ если есть
+    clean_usernames = []
+    for username in usernames:
+        if username.startswith('@'):
+            clean_usernames.append(username[1:].lower())  # Удаляем символ @ и приводим к нижнему регистру
+        else:
+            clean_usernames.append(username.lower())  # Приводим к нижнему регистру
+    
+    if not clean_usernames:
+        update.message.reply_text('Не удалось найти допустимые никнеймы в вашем списке.')
+        return
+    
+    # Подключаемся к базе данных
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Статистика проверки
+    found_in_users = 0
+    found_in_pending = 0
+    not_found = 0
+    not_found_usernames = []
+    
+    # Проходим по всем никнеймам
+    for username in clean_usernames:
+        # Проверяем, есть ли пользователь в таблице users
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (username,))
+            
+        user_result = cursor.fetchone()
+        
+        if user_result:
+            found_in_users += 1
+            continue
+        
+        # Проверяем, есть ли пользователь в таблице pending_users
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id FROM pending_users WHERE username = ?", (username,))
+            
+        pending_result = cursor.fetchone()
+        
+        if pending_result:
+            found_in_pending += 1
+        else:
+            not_found += 1
+            not_found_usernames.append(username)
+    
+    conn.close()
+    
+    # Формируем отчет
+    report = f"*Результаты проверки {len(clean_usernames)} пользователей:*\n\n"
+    report += f"Найдено в таблице users: {found_in_users}\n"
+    report += f"Найдено в таблице pending_users: {found_in_pending}\n"
+    report += f"Не найдено в базе данных: {not_found}\n"
+    
+    if not_found_usernames:
+        # Ограничиваем список ненайденных пользователей для избежания слишком длинного сообщения
+        shown_not_found = not_found_usernames[:10]
+        report += "\nНе найдены:\n"
+        for username in shown_not_found:
+            report += f"- @{username}\n"
+        
+        if len(not_found_usernames) > 10:
+            report += f"... и еще {len(not_found_usernames) - 10} пользователей"
+    
+    update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'check_users', 'admin_command')
+
+def list_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Получаем опциональный параметр команды - количество пользователей для отображения
+    limit = 10  # По умолчанию показываем только 10 пользователей
+    if context.args and context.args[0].isdigit():
+        limit = int(context.args[0])
+    
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Получаем общее количество пользователей
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    # Получаем список пользователей с ограничением
+    if db_type == 'postgres':
+        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT %s", (limit,))
+    else:
+        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT ?", (limit,))
+    
+    users = cursor.fetchall()
+    conn.close()
+    
+    # Формируем текст сообщения
+    message = f"*Список пользователей*\n\nВсего пользователей: {total_users}\n\n"
+    
+    if users:
+        for i, user in enumerate(users, 1):
+            user_id, username, first_name, last_name, is_admin = user
+            
+            # Формируем отображаемое имя пользователя
+            user_display = f"@{username}" if username else f"ID: {user_id}"
+            
+            if first_name or last_name:
+                name = f"{first_name or ''} {last_name or ''}" .strip()
+                if username:
+                    user_display += f" ({name})"
+                else:
+                    user_display = f"{name} ({user_display})"
+            
+            # Добавляем метку администратора
+            if is_admin:
+                user_display += " (Админ)"
+            
+            message += f"{i}. {user_display}\n"
+        
+        # Если есть еще пользователи, которые не поместились в ограничение
+        if total_users > limit:
+            message += f"\nИ еще {total_users - limit} пользователей..."
+            message += f"\n\nДля просмотра большего количества пользователей используйте команду /users <количество>"
+    else:
+        message += "Пользователи не найдены."
+    
+    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'list_users', 'admin_command')
+
 def show_stats(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
@@ -494,12 +1338,19 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
     total_admins = cursor.fetchone()[0]
     
-    # Count users who started the bot
+    # Count users who started the bot - используем все действия, не только start
     cursor.execute("""
-    SELECT COUNT(DISTINCT user_id) FROM logs 
-    WHERE action IN ('start', 'start_activated')
+    SELECT COUNT(DISTINCT user_id) FROM logs
     """)
     started_bot_count = cursor.fetchone()[0]
+    
+    # Получаем список всех пользователей для отображения в статистике
+    cursor.execute("SELECT user_id, username, first_name, last_name FROM users")
+    all_users = cursor.fetchall()
+    
+    # Создаем список пользователей, которые запустили бота
+    cursor.execute("SELECT DISTINCT user_id FROM logs")
+    active_users = set([row[0] for row in cursor.fetchall()])
     
     # Video access count for each button
     cursor.execute("""
@@ -516,37 +1367,37 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     
     # Get users who accessed the latest video with all their access timestamps
     cursor.execute("""
-    SELECT username, first_name, last_name, GROUP_CONCAT(timestamp, ', ') as access_times
+    SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
     FROM logs 
-    WHERE action = 'get_latest_video' AND username IS NOT NULL
-    GROUP BY username
+    WHERE action = 'get_latest_video'
+    GROUP BY COALESCE(username, user_id)
     ORDER BY MAX(timestamp) DESC
     """)
     latest_video_users = cursor.fetchall()
     
     # Get count of unique users who accessed the latest video
     cursor.execute("""
-    SELECT COUNT(DISTINCT username) 
+    SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
     FROM logs 
-    WHERE action = 'get_latest_video' AND username IS NOT NULL
+    WHERE action = 'get_latest_video'
     """)
     latest_video_unique_users = cursor.fetchone()[0]
     
     # Get users who accessed the previous video with all their access timestamps
     cursor.execute("""
-    SELECT username, first_name, last_name, GROUP_CONCAT(timestamp, ', ') as access_times
+    SELECT username, first_name, last_name, user_id, GROUP_CONCAT(timestamp, ', ') as access_times
     FROM logs 
-    WHERE action = 'get_previous_video' AND username IS NOT NULL
-    GROUP BY username
+    WHERE action = 'get_previous_video'
+    GROUP BY COALESCE(username, user_id)
     ORDER BY MAX(timestamp) DESC
     """)
     previous_video_users = cursor.fetchall()
     
     # Get count of unique users who accessed the previous video
     cursor.execute("""
-    SELECT COUNT(DISTINCT username) 
+    SELECT COUNT(DISTINCT COALESCE(username, user_id)) 
     FROM logs 
-    WHERE action = 'get_previous_video' AND username IS NOT NULL
+    WHERE action = 'get_previous_video'
     """)
     previous_video_unique_users = cursor.fetchone()[0]
     
@@ -556,22 +1407,34 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     stats_text = (
         f'*Статистика бота*\n\n'
         f'Всего пользователей: {total_users}\n'
-        f'Запустили бота: {started_bot_count}\n'
+        f'Запустили бота: {len(active_users)}\n'
         f'Администраторов: {total_admins}\n\n'
     )
+    
+    # Если есть пользователи, которые были добавлены, но не запустили бота
+    inactive_users = total_users - len(active_users)
+    if inactive_users > 0:
+        stats_text += f'Добавлено, но не запустили бота: {inactive_users}\n\n'
     
     # Add detailed statistics for the latest video
     stats_text += f'*Запись занятия 18 мая получили ({latest_video_unique_users}):*\n'
     if latest_video_users:
         for user in latest_video_users:
-            username, first_name, last_name, access_times = user
-            user_display = f'@{username}' if username else ''
+            username, first_name, last_name, user_id, access_times = user
+            # Если есть username, используем его, иначе используем user_id
+            if username:
+                user_display = f'@{username}'
+            else:
+                user_display = f'ID: {user_id}'
+                
             if first_name or last_name:
                 name = f'{first_name or ""} {last_name or ""}' .strip()
-                if user_display:
+                if username:
                     user_display += f' ({name})'
                 else:
-                    user_display = name
+                    user_display = f'{name} ({user_display})'
+            elif not username:
+                user_display = f'Пользователь {user_display}'
             
             # Format access times to show all timestamps when user accessed the video
             timestamps = access_times.split(', ')
@@ -595,14 +1458,21 @@ def show_stats(update: Update, context: CallbackContext) -> None:
     stats_text += f'\n*Запись занятия 22 мая получили ({previous_video_unique_users}):*\n'
     if previous_video_users:
         for user in previous_video_users:
-            username, first_name, last_name, access_times = user
-            user_display = f'@{username}' if username else ''
+            username, first_name, last_name, user_id, access_times = user
+            # Если есть username, используем его, иначе используем user_id
+            if username:
+                user_display = f'@{username}'
+            else:
+                user_display = f'ID: {user_id}'
+                
             if first_name or last_name:
                 name = f'{first_name or ""} {last_name or ""}' .strip()
-                if user_display:
+                if username:
                     user_display += f' ({name})'
                 else:
-                    user_display = name
+                    user_display = f'{name} ({user_display})'
+            elif not username:
+                user_display = f'Пользователь {user_display}'
             
             # Format access times to show all timestamps when user accessed the video
             timestamps = access_times.split(', ')
@@ -690,22 +1560,35 @@ def handle_message(update: Update, context: CallbackContext) -> None:
     user_id = user.id
     username = user.username
     
-    if not is_user_authorized(user_id, username):
+    # Разрешаем доступ к кнопкам как авторизованным пользователям, так и администраторам
+    if not (is_user_authorized(user_id, username) or is_admin(user_id)):
         update.message.reply_text(MSG_NOT_AUTHORIZED)
         return
     
     text = update.message.text
     
+    # Загружаем актуальные настройки кнопок из базы данных
+    buttons_data = load_buttons()
+    
+    # Проверяем нажатие на кнопку 1 (последнее занятие)
     if text == BUTTON_LATEST_LESSON:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(MSG_LATEST_LESSON, parse_mode=ParseMode.MARKDOWN)
+        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
+        update.message.reply_text(MSG_LATEST_LESSON)
         # Расширенное логирование с данными о кнопке
         log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
+    # Проверяем нажатие на кнопку 2 (предыдущее занятие)
     elif text == BUTTON_PREVIOUS_LESSON:
         # Используем индивидуальный текст сообщения для этой кнопки
-        update.message.reply_text(MSG_PREVIOUS_LESSON, parse_mode=ParseMode.MARKDOWN)
+        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
+        update.message.reply_text(MSG_PREVIOUS_LESSON)
         # Расширенное логирование с данными о кнопке
         log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
+    # Проверяем нажатие на кнопку "Обновить"
+    elif text == BUTTON_REFRESH:
+        # Если нажата кнопка "Обновить", вызываем функцию refresh_keyboard
+        refresh_keyboard(update, context)
+        log_action(user_id, 'refresh_keyboard_button', 'button_click')
     else:
         update.message.reply_text(
             'Пожалуйста, используйте кнопки для доступа к записям занятий.'
@@ -799,9 +1682,134 @@ def pending_users(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'pending_users', 'admin_command')
 
+def make_admin(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    # Проверяем, что команду выполняет администратор
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Проверяем, что указан пользователь для повышения до администратора
+    if not context.args:
+        update.message.reply_text('Пожалуйста, укажите Telegram ID или @username пользователя, которого вы хотите сделать администратором.')
+        return
+    
+    user_identifier = context.args[0]
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Определяем, является ли идентификатор числом (ID) или именем пользователя
+    if user_identifier.isdigit():
+        # Если это ID
+        target_user_id = int(user_identifier)
+        
+        # Проверяем, существует ли пользователь с таким ID
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = ?", (target_user_id,))
+            
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f'Пользователь с ID {target_user_id} не найден.')
+            conn.close()
+            return
+            
+        user_id, username, is_admin_flag = user_data
+        
+        # Проверяем, не является ли пользователь уже администратором
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
+            update.message.reply_text(f'Пользователь с ID {target_user_id} уже является администратором.')
+            conn.close()
+            return
+        
+        # Делаем пользователя администратором
+        if db_type == 'postgres':
+            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        conn.commit()
+        
+        username_str = f'@{username}' if username else ''
+        
+        # Создаем сообщение о назначении администратором
+        admin_message = f'''✅ Пользователь {username_str} (ID: {target_user_id}) успешно назначен администратором.
+
+ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
+        
+        update.message.reply_text(admin_message)
+        log_action(user_id, 'make_admin', f'target_user_id:{target_user_id}')
+        
+    elif user_identifier.startswith('@'):
+        # Если это @username
+        username = user_identifier[1:]  # Убираем символ @
+        
+        # Находим пользователя по имени
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+            
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f'Пользователь @{username} не найден.')
+            conn.close()
+            return
+            
+        target_user_id, is_admin_flag = user_data
+        
+        # Проверяем, не является ли пользователь уже администратором
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
+            update.message.reply_text(f'Пользователь @{username} уже является администратором.')
+            conn.close()
+            return
+        
+        # Делаем пользователя администратором
+        if db_type == 'postgres':
+            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        conn.commit()
+        
+        # Создаем сообщение о назначении администратором
+        admin_message = f'''✅ Пользователь @{username} (ID: {target_user_id}) успешно назначен администратором.
+
+ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
+        
+        update.message.reply_text(admin_message)
+        log_action(user_id, 'make_admin', f'target_username:@{username}')
+        
+    else:
+        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
+    
+    conn.close()
+
 def main() -> None:
+    # Initialize database with all required tables
+    try:
+        init_database()
+        print("База данных успешно инициализирована")
+    except Exception as e:
+        print(f"Ошибка при инициализации базы данных: {e}")
+    
     # Setup database
     setup_database()
+    
+    # Load button settings from database
+    load_buttons_from_db()
     
     # Get token from environment variable
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -818,13 +1826,24 @@ def main() -> None:
     # Register command handlers
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("refresh", refresh_keyboard))
     dispatcher.add_handler(CommandHandler("adduser", add_user))
+    dispatcher.add_handler(CommandHandler("addusers", add_users))
     dispatcher.add_handler(CommandHandler("removeuser", remove_user))
     dispatcher.add_handler(CommandHandler("updatevideo", update_video))
     dispatcher.add_handler(CommandHandler("stats", show_stats))
     dispatcher.add_handler(CommandHandler("actions", show_actions))
     dispatcher.add_handler(CommandHandler("listusers", list_users))
+    dispatcher.add_handler(CommandHandler("users", list_users))
+    dispatcher.add_handler(CommandHandler("checkusers", check_users))
+    dispatcher.add_handler(CommandHandler("diagnosedb", diagnose_db))
+    dispatcher.add_handler(CommandHandler("initdb", init_db_command))
     dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
+    dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
+    
+    # Register button update command handlers
+    dispatcher.add_handler(CommandHandler("button1", update_button))
+    dispatcher.add_handler(CommandHandler("button2", update_button))
     
     # Register message handler
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))

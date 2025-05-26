@@ -198,12 +198,28 @@ class VideoDownloadsAnalyzer:
                     for user_row in users:
                         username, user_id, first_name, last_name = user_row
                         
+                        # Добавляем отладочную информацию о формате никнейма
+                        logger.info(f"Никнейм в базе: '{username}', тип: {type(username)}")
+                        
                         # Ищем полное имя пользователя в нашем файле names.csv
                         full_name_from_csv = None
                         if username and self.names_loader:
+                            # Пробуем разные варианты никнейма
+                            # 1. Как есть
                             full_name_from_csv = self.names_loader.get_full_name(username)
+                            
+                            # 2. Без @ в начале, если он есть
+                            if not full_name_from_csv and username.startswith('@'):
+                                full_name_from_csv = self.names_loader.get_full_name(username[1:])
+                                logger.info(f"Попытка без @: {username[1:]}")
+                            
+                            # 3. С @ в начале, если его нет
+                            if not full_name_from_csv and not username.startswith('@'):
+                                full_name_from_csv = self.names_loader.get_full_name(f"@{username}")
+                                logger.info(f"Попытка с @: @{username}")
+                                
                             if full_name_from_csv:
-                                logger.info(f"Найдено полное имя для @{username}: {full_name_from_csv}")
+                                logger.info(f"Найдено полное имя для '{username}': {full_name_from_csv}")
                         
                         # Формируем отображаемое имя
                         if username:

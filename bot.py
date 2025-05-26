@@ -1326,17 +1326,9 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         return
 
     try:
-        # Подключаемся к базе данных
-        conn = get_db_connection()
+        # Подключаемся к базе данных и получаем тип базы
+        conn, db_type = get_db_connection()
         cursor = conn.cursor()
-
-        # Определяем тип базы данных
-        db_type = 'sqlite'
-        try:
-            cursor.execute("SELECT version()")
-            db_type = 'postgres'
-        except:
-            pass
 
         # Получаем общее количество пользователей
         cursor.execute("SELECT COUNT(*) FROM users")

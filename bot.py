@@ -14,6 +14,9 @@ import pytz
 from telegram import Update, ParseMode, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
 
+# Импортируем класс анализатора видео
+from video_analyzer import VideoDownloadsAnalyzer
+
 # Импортируем модуль для работы с базой данных
 from db_utils import setup_database, get_db_connection, load_buttons, save_button
 
@@ -1334,15 +1337,15 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         cursor.execute("SELECT COUNT(*) FROM users")
         total_users = cursor.fetchone()[0]
 
-        # Получаем количество активированных пользователей
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+        # Получаем количество активных пользователей (по логам)
+        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM logs")
         active_users = cursor.fetchone()[0]
 
         # Получаем количество администраторов
         cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
         admin_count = cursor.fetchone()[0]
 
-        # Получаем количество неактивированных пользователей
+        # Получаем количество неактивных пользователей
         inactive_users = total_users - active_users
 
         # Формируем текст статистики
@@ -1368,69 +1371,39 @@ def show_stats(update: Update, context: CallbackContext) -> None:
 
         stats_text += "\n"
 
-        # Жестко задаем порядок отображения дат и их соответствующие action_data строки
-        # и специфичные action-имена
-        lesson_configs = {
-            '18 мая': {
-                'action_data_pattern': 'Запись занятия 18 мая',
-                'specific_actions': ['get_video_2', 'get_video_18 мая'] # Добавлено 'get_video_18 мая' для надежности
-            },
-            '22 мая': {
-                'action_data_pattern': 'Запись занятия 22 мая',
-                'specific_actions': ['get_previous_video', 'get_video_22 мая']
-            },
-            '25 мая': {
-                'action_data_pattern': 'Запись занятия 25 мая',
-                'specific_actions': ['get_latest_video', 'get_video_25 мая']
-            }
-        }
-        ordered_dates = ['18 мая', '22 мая', '25 мая']
-
-        for date_str in ordered_dates:
-            config = lesson_configs[date_str]
-            action_data_pattern = config['action_data_pattern']
-            specific_actions = config['specific_actions']
-
-            # Формируем условия для WHERE clause
-            conditions = []
-            params = []
-
-            # Условие для action_data
-            conditions.append(f"l.action_data = %s" if db_type == 'postgres' else f"l.action_data = ?")
-            params.append(action_data_pattern)
-
-            # Условия для specific_actions
-            if specific_actions:
-                placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(specific_actions))
-                conditions.append(f"l.action IN ({placeholders})")
-                params.extend(specific_actions)
+        # Используем VideoDownloadsAnalyzer для получения статистики по видео
+        # Создаем экземпляр анализатора
+        if db_type == 'postgres':
+            # Для PostgreSQL
+            analyzer = VideoDownloadsAnalyzer(
+                db_type='postgresql',
+                database='filmschool'  # Имя базы данных может отличаться
+            )
+        else:
+            # Для SQLite
+            analyzer = VideoDownloadsAnalyzer(
+                db_type='sqlite',
+                database='filmschool.db'  # Используем файл базы данных по умолчанию
+            )
+        
+        # Получаем данные о скачиваниях видео
+        try:
+            analyzer.connect()
+            video_downloads = analyzer.get_video_downloads()
             
-            where_clause = " OR ".join(f"({c})" for c in conditions) # Оборачиваем каждое условие в скобки для корректного OR
-
-            query = f"""
-                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                FROM logs l
-                LEFT JOIN users u ON l.user_id = u.user_id
-                WHERE {where_clause}
-                ORDER BY l.username
-            """
-            
-            cursor.execute(query, params)
-            video_users = cursor.fetchall()
-
-            stats_text += f"Запись занятия {date_str} получили: {len(video_users)}\n"
-            
-            # Добавляем список пользователей
-            for user_row in video_users: # Переименовано, чтобы избежать конфликта с update.effective_user
-                username, user_id_db, first_name, last_name = user_row # user_id_db для ясности
-                if username:
-                    user_display = "@" + username
-                elif first_name:
-                    user_display = first_name + (" " + last_name if last_name else "")
-                else:
-                    user_display = f"ID: {user_id_db}" # Отображаем ID, если нет имени или юзернейма
-                stats_text += f"- {user_display}\n"
-            stats_text += "\n"
+            # Добавляем статистику по видео в общий отчет
+            for date in ['18 мая', '22 мая', '25 мая']:
+                users = video_downloads.get(date, [])
+                stats_text += f"Запись занятия {date} получили: {len(users)}\n"
+                
+                # Добавляем список пользователей
+                for user in users:
+                    stats_text += f"- {user['display_name']}\n"
+                
+                stats_text += "\n"
+        finally:
+            # Закрываем соединение анализатора
+            analyzer.disconnect()
 
         # Send statistics
         update.message.reply_text(stats_text)

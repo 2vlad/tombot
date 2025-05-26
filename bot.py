@@ -1330,6 +1330,34 @@ def list_users(update: Update, context: CallbackContext) -> None:
 
 
 def get_previous_video(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = user.id
+    username = user.username
+    
+    if not is_user_authorized(user_id, username):
+        update.message.reply_text(MSG_NOT_AUTHORIZED)
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT title, url, upload_date FROM videos ORDER BY upload_date DESC LIMIT 2")
+    videos = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    if len(videos) >= 2:
+        title, url, date = videos[1]  # Second video is the previous one
+        update.message.reply_text(
+            f'*{title}*\n\n'
+            f'Дата загрузки: {date}\n\n'
+            f'Ссылка: {url}',
+            parse_mode=ParseMode.MARKDOWN
+        )
+        log_action(user_id, 'get_previous_video', 'Запись занятия 22 мая')
+    else:
+        update.message.reply_text('Предыдущее занятие пока не доступно. Пожалуйста, попробуйте позже.')
+
 def show_stats(update: Update, context: CallbackContext) -> None:
     """Показать статистику использования бота"""
     # Проверяем, является ли пользователь администратором

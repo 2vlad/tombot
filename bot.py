@@ -1456,13 +1456,7 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             '25 мая': []
         }
         
-        # Добавляем все действия в список для последующего анализа
-        all_actions = []
-        for action, count in video_actions:
-            all_actions.append(action)
-
-        # Добавляем все действия, связанные с получением видео, в соответствующие списки по датам
-        # Запрашиваем все действия из логов
+        # Запрашиваем все действия из логов, связанные с получением видео
         cursor.execute("""
             SELECT DISTINCT user_id, action, action_data
             FROM logs
@@ -1475,34 +1469,40 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         user_date_actions = {}
         
         for user_id, action, action_data in user_actions:
-            # Определяем дату на основе действия или данных действия
+            # Определяем дату преимущественно на основе action_data
             date = None
             
-            # Сначала проверяем action_data
+            # Сначала проверяем action_data - это наш основной источник информации
             if action_data and isinstance(action_data, str):
-                if '18 мая' in action_data:
+                if 'Запись занятия 18 мая' in action_data:
+                    date = '18 мая'
+                elif 'Запись занятия 22 мая' in action_data:
+                    date = '22 мая'
+                elif 'Запись занятия 25 мая' in action_data:
+                    date = '25 мая'
+                # Дополнительные проверки для других форматов дат в action_data
+                elif '18 мая' in action_data:
                     date = '18 мая'
                 elif '22 мая' in action_data:
                     date = '22 мая'
                 elif '25 мая' in action_data:
                     date = '25 мая'
             
-            # Если дата не определена из action_data, проверяем само действие
+            # Только если дата не определена из action_data, используем другие методы
             if not date:
-                if action in action_to_date:
-                    date = action_to_date[action]
-                elif '18 мая' in action:
-                    date = '18 мая'
-                elif '22 мая' in action:
-                    date = '22 мая'
-                elif '25 мая' in action:
-                    date = '25 мая'
-                elif action == 'get_latest_video':
+                # Используем заранее определенные соответствия действий и дат
+                if action == 'get_latest_video':
                     date = '25 мая'
                 elif action == 'get_previous_video':
                     date = '22 мая'
                 elif action == 'get_video_2':
                     date = '18 мая'
+                elif 'get_video_18' in action or '18 мая' in action:
+                    date = '18 мая'
+                elif 'get_video_22' in action or '22 мая' in action:
+                    date = '22 мая'
+                elif 'get_video_25' in action or '25 мая' in action:
+                    date = '25 мая'
             
             # Если дата определена, добавляем пользователя в соответствующий список
             if date and date in date_to_actions:

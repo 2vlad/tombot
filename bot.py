@@ -1411,31 +1411,43 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         # Получаем информацию о соответствии действий и дат из базы данных
         action_to_date = {}
         try:
-            # Запрашиваем данные из логов, где есть информация о записях занятий
+            # Запрашиваем все данные из логов с информацией о записях занятий
             cursor.execute("""
-                SELECT DISTINCT action, action_data 
+                SELECT action, action_data 
                 FROM logs 
-                WHERE action_data LIKE 'Запись занятия%'
-                OR action LIKE 'get_video_%'
-                OR action IN ('get_latest_video', 'get_previous_video')
+                WHERE action_data IS NOT NULL
             """)
             
             action_date_mapping = cursor.fetchall()
             
             # Создаем словарь соответствия действий и дат
             for action, action_data in action_date_mapping:
-                if action_data and 'Запись занятия' in action_data:
-                    # Извлекаем дату из action_data (например, "Запись занятия 22 мая")
-                    date = action_data.replace('Запись занятия ', '')
-                    action_to_date[action] = date
+                # Проверяем, есть ли в action_data информация о записи занятия
+                if action_data and isinstance(action_data, str):
+                    if 'Запись занятия 18 мая' in action_data:
+                        action_to_date[action] = '18 мая'
+                    elif 'Запись занятия 22 мая' in action_data:
+                        action_to_date[action] = '22 мая'
+                    elif 'Запись занятия 25 мая' in action_data:
+                        action_to_date[action] = '25 мая'
+                    # Дополнительные проверки для других форматов дат
+                    elif '18 мая' in action_data:
+                        action_to_date[action] = '18 мая'
+                    elif '22 мая' in action_data:
+                        action_to_date[action] = '22 мая'
+                    elif '25 мая' in action_data:
+                        action_to_date[action] = '25 мая'
         except Exception as e:
             print(f"Ошибка при получении соответствия действий и дат: {e}")
         
-        # Устанавливаем соответствие по умолчанию для основных действий, если не найдено в базе
-        if 'get_latest_video' not in action_to_date:
-            action_to_date['get_latest_video'] = '25 мая'
-        if 'get_previous_video' not in action_to_date:
-            action_to_date['get_previous_video'] = '22 мая'
+        # Устанавливаем соответствие по умолчанию для основных действий
+        # Явно задаем соответствие действий и дат
+        action_to_date['get_latest_video'] = '25 мая'
+        action_to_date['get_previous_video'] = '22 мая'
+        action_to_date['get_video_2'] = '18 мая'
+        action_to_date['get_video_18 мая'] = '18 мая'
+        action_to_date['get_video_22 мая'] = '22 мая'
+        action_to_date['get_video_25 мая'] = '25 мая'
         
         # Создаем словарь для хранения действий по датам
         date_to_actions = {
@@ -1444,24 +1456,65 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             '25 мая': []
         }
         
-        # Распределяем действия по датам на основе данных из базы
-        for action, _ in video_actions:
-            # Если у нас есть информация о дате для этого действия из базы
-            if action in action_to_date:
-                date = action_to_date[action]
-                if date in date_to_actions:
+        # Добавляем все действия в список для последующего анализа
+        all_actions = []
+        for action, count in video_actions:
+            all_actions.append(action)
+
+        # Добавляем все действия, связанные с получением видео, в соответствующие списки по датам
+        # Запрашиваем все действия из логов
+        cursor.execute("""
+            SELECT DISTINCT user_id, action, action_data
+            FROM logs
+            WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
+        """)
+        
+        user_actions = cursor.fetchall()
+        
+        # Создаем словарь пользователей и их действий по датам
+        user_date_actions = {}
+        
+        for user_id, action, action_data in user_actions:
+            # Определяем дату на основе действия или данных действия
+            date = None
+            
+            # Сначала проверяем action_data
+            if action_data and isinstance(action_data, str):
+                if '18 мая' in action_data:
+                    date = '18 мая'
+                elif '22 мая' in action_data:
+                    date = '22 мая'
+                elif '25 мая' in action_data:
+                    date = '25 мая'
+            
+            # Если дата не определена из action_data, проверяем само действие
+            if not date:
+                if action in action_to_date:
+                    date = action_to_date[action]
+                elif '18 мая' in action:
+                    date = '18 мая'
+                elif '22 мая' in action:
+                    date = '22 мая'
+                elif '25 мая' in action:
+                    date = '25 мая'
+                elif action == 'get_latest_video':
+                    date = '25 мая'
+                elif action == 'get_previous_video':
+                    date = '22 мая'
+                elif action == 'get_video_2':
+                    date = '18 мая'
+            
+            # Если дата определена, добавляем пользователя в соответствующий список
+            if date and date in date_to_actions:
+                # Добавляем действие в список для этой даты
+                if action not in date_to_actions[date]:
                     date_to_actions[date].append(action)
-            # Если нет информации из базы, используем логику по умолчанию
-            else:
-                # Действия для 25 мая
-                if action == 'get_latest_video' or action == 'get_video_25 мая' or '25 мая' in action:
-                    date_to_actions['25 мая'].append(action)
-                # Действия для 22 мая
-                elif action == 'get_previous_video' or action == 'get_video_22 мая' or '22 мая' in action:
-                    date_to_actions['22 мая'].append(action)
-                # Действия для 18 мая
-                elif action == 'get_video_2' or action == 'get_video_18 мая' or '18 мая' in action:
-                    date_to_actions['18 мая'].append(action)
+                
+                # Добавляем пользователя в словарь для этой даты
+                if user_id not in user_date_actions:
+                    user_date_actions[user_id] = []
+                if date not in user_date_actions[user_id]:
+                    user_date_actions[user_id].append(date)
         
         # Добавляем фиктивное действие для 18 мая, если нет действий, чтобы всегда показывать эту дату
         if not date_to_actions['18 мая']:
@@ -1476,51 +1529,44 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             # Получаем список действий для этой даты
             actions_for_date = date_to_actions[date]
             
-            # Если есть действия для этой даты или это 18 мая (которое всегда показываем)
-            if actions_for_date or date == '18 мая':
-                # Если у нас есть действия для этой даты, формируем запрос с использованием IN
-                if actions_for_date:
-                    # Для нескольких действий используем IN с параметрами
-                    placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(actions_for_date))
-                    
-                    if db_type == 'postgres':
-                        query = f"""
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE l.action IN ({placeholders}) 
-                            ORDER BY l.username
-                        """
-                    else:
-                        query = f"""
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE l.action IN ({placeholders}) 
-                            ORDER BY l.username
-                        """
-                    
-                    cursor.execute(query, actions_for_date)
-                else:
-                    # Если нет действий, но это 18 мая, используем пустой запрос (вернет 0 пользователей)
-                    if db_type == 'postgres':
-                        cursor.execute("""
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE 1=0 -- Пустой результат
-                            ORDER BY l.username
-                        """)
-                    else:
-                        cursor.execute("""
-                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name 
-                            FROM logs l
-                            LEFT JOIN users u ON l.user_id = u.user_id
-                            WHERE 1=0 -- Пустой результат
-                            ORDER BY l.username
-                        """)
+            # Собираем список пользователей, которые получили запись для этой даты
+            video_users = []
+            
+            # Если это 18 мая и нет действий, оставляем пустой список
+            if date == '18 мая' and not actions_for_date:
+                video_users = []
+            else:
+                # Собираем всех пользователей, которые выполняли действия для этой даты
+                user_ids = []
                 
-                video_users = cursor.fetchall()
+                # Собираем ID пользователей, которые получили запись для этой даты
+                for user_id, dates in user_date_actions.items():
+                    if date in dates:
+                        user_ids.append(user_id)
+                
+                # Если есть пользователи, получаем их данные
+                if user_ids:
+                    # Формируем строку с плейсхолдерами для IN
+                    placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(user_ids))
+                    
+                    # Запрашиваем данные пользователей
+                    if db_type == 'postgres':
+                        query = f"""
+                            SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
+                            FROM users u
+                            WHERE u.user_id IN ({placeholders})
+                            ORDER BY u.username
+                        """
+                    else:
+                        query = f"""
+                            SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
+                            FROM users u
+                            WHERE u.user_id IN ({placeholders})
+                            ORDER BY u.username
+                        """
+                    
+                    cursor.execute(query, user_ids)
+                    video_users = cursor.fetchall()
                 
                 # Добавляем статистику для этой даты
                 stats_text += f"Запись занятия {date} получили: {len(video_users)}\n"
@@ -1563,32 +1609,7 @@ def show_stats(update: Update, context: CallbackContext) -> None:
                 conn.close()
         except:
             pass
-    user = update.effective_user
-    user_id = user.id
-    username = user.username
-    
-    if not is_user_authorized(user_id, username):
-        update.message.reply_text(MSG_NOT_AUTHORIZED)
-        return
-    
-    conn = sqlite3.connect('filmschool.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT title, url, upload_date FROM videos ORDER BY upload_date DESC LIMIT 2")
-    videos = cursor.fetchall()
-    conn.close()
-    
-    if len(videos) >= 2:
-        title, url, date = videos[1]  # Second video is the previous one
-        update.message.reply_text(
-            f'*{title}*\n\n'
-            f'Дата загрузки: {date}\n\n'
-            f'Ссылка: {url}',
-            parse_mode=ParseMode.MARKDOWN
-        )
-        log_action(user_id, 'get_previous_video', 'database_access')
-    else:
-        update.message.reply_text('Предыдущее занятие пока не доступно. Пожалуйста, попробуйте позже.')
+
 
 # Message handler
 def handle_message(update: Update, context: CallbackContext) -> None:

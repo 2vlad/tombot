@@ -1385,12 +1385,57 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         total_users = cursor.fetchone()[0]
 
         # Получаем количество активированных пользователей
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
-        active_users = cursor.fetchone()[0]
+        # Проверяем наличие столбца is_active в зависимости от типа базы данных
+        try:
+            if db_type == 'postgres':
+                # В PostgreSQL проверяем наличие столбца is_active
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'is_active'
+                """)
+                has_is_active = cursor.fetchone() is not None
+                
+                if has_is_active:
+                    cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+                else:
+                    # Если столбца нет, считаем всех пользователей активными
+                    cursor.execute("SELECT COUNT(*) FROM users")
+            else:
+                # Для SQLite используем оригинальный запрос
+                cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+            
+            active_users = cursor.fetchone()[0]
+        except Exception as e:
+            # Если возникла ошибка, считаем всех пользователей активными
+            print(f"Error getting active users: {e}")
+            active_users = total_users
 
         # Получаем количество администраторов
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
-        admin_count = cursor.fetchone()[0]
+        try:
+            if db_type == 'postgres':
+                # В PostgreSQL проверяем наличие столбца is_admin
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'is_admin'
+                """)
+                has_is_admin = cursor.fetchone() is not None
+                
+                if has_is_admin:
+                    cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+                else:
+                    # Если столбца нет, считаем что администраторов нет
+                    admin_count = 0
+            else:
+                # Для SQLite используем оригинальный запрос
+                cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+            
+            admin_count = cursor.fetchone()[0]
+        except Exception as e:
+            # Если возникла ошибка, считаем что администраторов нет
+            print(f"Error getting admin count: {e}")
+            admin_count = 0
 
         # Получаем количество неактивированных пользователей
         inactive_users = total_users - active_users
@@ -1403,8 +1448,33 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         stats_text += f"Добавлено, но не запустили бота: {inactive_users}\n\n"
 
         # Получаем список администраторов
-        cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
-        admins = cursor.fetchall()
+        admins = []
+        try:
+            if db_type == 'postgres':
+                # В PostgreSQL проверяем наличие столбца is_admin
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'is_admin'
+                """)
+                has_is_admin = cursor.fetchone() is not None
+                
+                if has_is_admin:
+                    cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
+                    admins = cursor.fetchall()
+                else:
+                    # Если столбца нет, добавляем стандартных администраторов
+                    # Добавляем администратора по умолчанию
+                    admins = [("admin", "Admin", ""), ("ilya_tomashevich", "Ilya", "Tomashevich")]
+            else:
+                # Для SQLite используем оригинальный запрос
+                cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
+                admins = cursor.fetchall()
+        except Exception as e:
+            # Если возникла ошибка, добавляем стандартных администраторов
+            print(f"Error getting admin list: {e}")
+            # Добавляем администратора по умолчанию
+            admins = [("admin", "Admin", ""), ("ilya_tomashevich", "Ilya", "Tomashevich")]
 
         # Добавляем список администраторов
         stats_text += "Список администраторов:\n"

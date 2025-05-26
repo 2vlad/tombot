@@ -116,14 +116,45 @@ class VideoDownloadsAnalyzer:
                 where_clause = " OR ".join(f"({c})" for c in conditions)
                 
                 # Для PostgreSQL нужно использовать двойные кавычки для имен таблиц и столбцов
+                # Используем простой запрос для надежности
                 if self.db_type == 'postgresql':
-                    query = f"""
-                        SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
-                        FROM logs l
-                        LEFT JOIN users u ON l.user_id = u.user_id
-                        WHERE {where_clause}
-                        ORDER BY l.username
-                    """
+                    # В PostgreSQL используем прямой запрос по action и action_data
+                    if date == '25 мая':
+                        query = """
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE l.action = 'get_video_25 мая' OR l.action_data LIKE '%Запись занятия 25 мая%'
+                            ORDER BY l.username
+                        """
+                        params = []
+                    elif date == '22 мая':
+                        query = """
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE l.action = 'get_video_22 мая' OR l.action = 'get_previous_video' OR l.action_data LIKE '%Запись занятия 22 мая%'
+                            ORDER BY l.username
+                        """
+                        params = []
+                    elif date == '18 мая':
+                        query = """
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE l.action = 'get_video_18 мая' OR l.action = 'get_latest_video' OR l.action_data LIKE '%Запись занятия 18 мая%'
+                            ORDER BY l.username
+                        """
+                        params = []
+                    else:
+                        # Для других дат используем общий запрос
+                        query = f"""
+                            SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                            FROM logs l
+                            LEFT JOIN users u ON l.user_id = u.user_id
+                            WHERE {where_clause}
+                            ORDER BY l.username
+                        """
                 else:
                     query = f"""
                         SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
@@ -135,10 +166,14 @@ class VideoDownloadsAnalyzer:
                 
                 # Добавляем отладочную информацию
                 logger.info(f"Запрос для даты {date}: {query}")
-                logger.info(f"Параметры: {params}")
+                if params:
+                    logger.info(f"Параметры: {params}")
                 
                 try:
-                    self.cursor.execute(query, params)
+                    if params:
+                        self.cursor.execute(query, params)
+                    else:
+                        self.cursor.execute(query)
                     users = self.cursor.fetchall()
                     logger.info(f"Найдено пользователей для даты {date}: {len(users)}")
                 except Exception as e:

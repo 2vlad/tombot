@@ -1541,915 +1541,111 @@ def show_stats(update: Update, context: CallbackContext) -> None:
 
         stats_text += "\n"
 
-        # Получаем статистику по видео
-        # Сначала получаем все действия, связанные с получением видео
+        # --- Refresh PostgreSQL connection for video stats ---
         if db_type == 'postgres':
-            cursor.execute("""
-                SELECT action, COUNT(*) 
-                FROM logs 
-                WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
-                GROUP BY action
-            """)
-        else:
-            cursor.execute("""
-                SELECT action, COUNT(*) 
-                FROM logs 
-                WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
-                GROUP BY action
-            """)
-
-        video_actions = cursor.fetchall()
-
-        # Получаем информацию о соответствии действий и дат из базы данных
-        action_to_date = {}
-        try:
-            # Запрашиваем все данные из логов с информацией о записях занятий
-            cursor.execute("""
-                SELECT action, action_data 
-                FROM logs 
-                WHERE action_data IS NOT NULL
-            """)
+            logger.info("Refreshing connection for video stats in show_stats (PostgreSQL)")
+            if 'cursor' in locals() and cursor:
+                try:
+                    cursor.close()
+                except Exception as e_cursor:
+                    logger.warning(f"Error closing cursor before video stats: {e_cursor}")
+            if 'conn' in locals() and conn:
+                try:
+                    conn.close()
+                except Exception as e_conn:
+                    logger.warning(f"Error closing connection before video stats: {e_conn}")
             
-            action_date_mapping = cursor.fetchall()
-            
-            # Создаем словарь соответствия действий и дат
-            for action, action_data in action_date_mapping:
-                # Проверяем, есть ли в action_data информация о записи занятия
-                if action_data and isinstance(action_data, str):
-                    if 'Запись занятия 18 мая' in action_data:
-                        action_to_date[action] = '18 мая'
-                    elif 'Запись занятия 22 мая' in action_data:
-                        action_to_date[action] = '22 мая'
-                    elif 'Запись занятия 25 мая' in action_data:
-                        action_to_date[action] = '25 мая'
-                    # Дополнительные проверки для других форматов дат
-                    elif '18 мая' in action_data:
-                        action_to_date[action] = '18 мая'
-                    elif '22 мая' in action_data:
-                        action_to_date[action] = '22 мая'
-                    elif '25 мая' in action_data:
-                        action_to_date[action] = '25 мая'
-        except Exception as e:
-            print(f"Ошибка при получении соответствия действий и дат: {e}")
-            conn.rollback()
-        
-        # Устанавливаем соответствие по умолчанию для основных действий
-        # Явно задаем соответствие действий и дат
-        action_to_date['get_latest_video'] = '25 мая'
-        action_to_date['get_previous_video'] = '22 мая'
-        action_to_date['get_video_2'] = '18 мая'
-        action_to_date['get_video_18 мая'] = '18 мая'
-        action_to_date['get_video_22 мая'] = '22 мая'
-        action_to_date['get_video_25 мая'] = '25 мая'
-        
-        # Создаем словарь для хранения действий по датам
-        date_to_actions = {
-            '18 мая': [],
-            '22 мая': [],
-            '25 мая': []
-        }
-        
-        # Для PostgreSQL используем новое соединение для каждого запроса
-        if db_type == 'postgres':
-            # Закрываем текущее соединение
-            cursor.close()
-            conn.close()
-            
-            # Создаем новое соединение
+            # Create a new connection for video stats
             result = get_db_connection()
             if isinstance(result, tuple) and len(result) == 2:
-                conn, db_type = result
+                conn, db_type = result # Update conn and db_type (although db_type should remain postgres)
             else:
-                update.message.reply_text("Ошибка при подключении к базе данных")
+                update.message.reply_text("Ошибка при подключении к базе данных для получения видеостатистики.")
+                if 'conn' in locals() and conn: conn.close() # Close if something went wrong
                 return
-            
             cursor = conn.cursor()
+
+        # Get unique dates from logs for get_video (in correct order)
+        # Use coalesce to handle NULL values that may arise if there are no matches with LIKE
+        # Also add a check that action_data is not NULL to avoid errors with SUBSTRING
+        ordered_dates_query_postgres = """
+            SELECT DISTINCT video_date_str
+            FROM (
+                SELECT CASE 
+                        WHEN action_data LIKE 'get_video_%%' THEN SUBSTRING(action_data FROM 'get_video_(.*)')
+                        ELSE NULL 
+                       END AS video_date_str
+                FROM user_actions 
+                WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL
+            ) AS subquery
+            WHERE video_date_str IS NOT NULL
+            ORDER BY CASE 
+                     WHEN video_date_str LIKE '%% января' THEN 1
+                     WHEN video_date_str LIKE '%% февраля' THEN 2
+                     WHEN video_date_str LIKE '%% марта' THEN 3
+                     WHEN video_date_str LIKE '%% апреля' THEN 4
+                     WHEN video_date_str LIKE '%% мая' THEN 5
+                     WHEN video_date_str LIKE '%% июня' THEN 6
+                     WHEN video_date_str LIKE '%% июля' THEN 7
+                     WHEN video_date_str LIKE '%% августа' THEN 8
+                     WHEN video_date_str LIKE '%% сентября' THEN 9
+                     WHEN video_date_str LIKE '%% октября' THEN 10
+                     WHEN video_date_str LIKE '%% ноября' THEN 11
+                     WHEN video_date_str LIKE '%% декабря' THEN 12
+                     ELSE 13 END,
+                     CAST(COALESCE(SUBSTRING(video_date_str FROM '^[0-9]+'), '0') AS INTEGER)
+        """
         
-        # Запрашиваем все действия из логов, связанные с получением видео
+        ordered_dates_query_sqlite = """
+            SELECT DISTINCT SUBSTR(action_data, LENGTH('get_video_') + 1)
+            FROM user_actions 
+            WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL
+            ORDER BY 
+                CASE 
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% января' THEN 1
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% февраля' THEN 2
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% марта' THEN 3
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% апреля' THEN 4
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% мая' THEN 5
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% июня' THEN 6
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% июля' THEN 7
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% августа' THEN 8
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% сентября' THEN 9
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% октября' THEN 10
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% ноября' THEN 11
+                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% декабря' THEN 12
+                    ELSE 13 END,
+                CAST(SUBSTR(SUBSTR(action_data, LENGTH('get_video_') + 1), 1, INSTR(SUBSTR(action_data, LENGTH('get_video_') + 1), ' ') - 1) AS INTEGER)
+        """
+
         try:
-            cursor.execute("""
-                SELECT DISTINCT user_id, action, action_data
-                FROM logs
-                WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
-            """)
-            
-            user_actions = cursor.fetchall()
+            if db_type == 'postgres':
+                cursor.execute(ordered_dates_query_postgres)
+            else:
+                cursor.execute(ordered_dates_query_sqlite)
+            video_date_rows = cursor.fetchall()
+            ordered_dates = [row[0] for row in video_date_rows if row[0]]
         except Exception as e:
-            print(f"Error getting video actions: {e}")
-            user_actions = []
-        
-        # Создаем словарь пользователей и их действий по датам
-        user_date_actions = {}
-        
-        for user_id, action, action_data in user_actions:
-            # Определяем дату преимущественно на основе action_data
-            date = None
-            
-            # Сначала проверяем action_data - это наш основной источник информации
-            if action_data and isinstance(action_data, str):
-                if 'Запись занятия 18 мая' in action_data:
-                    date = '18 мая'
-                elif 'Запись занятия 22 мая' in action_data:
-                    date = '22 мая'
-                elif 'Запись занятия 25 мая' in action_data:
-                    date = '25 мая'
-                # Дополнительные проверки для других форматов дат в action_data
-                elif '18 мая' in action_data:
-                    date = '18 мая'
-                elif '22 мая' in action_data:
-                    date = '22 мая'
-                elif '25 мая' in action_data:
-                    date = '25 мая'
-            
-            # Только если дата не определена из action_data, используем другие методы
-            if not date:
-                # Используем заранее определенные соответствия действий и дат
-                if action == 'get_latest_video':
-                    date = '25 мая'
-                elif action == 'get_previous_video':
-                    date = '22 мая'
-                elif action == 'get_video_2':
-                    date = '18 мая'
-                elif 'get_video_18' in action or '18 мая' in action:
-                    date = '18 мая'
-                elif 'get_video_22' in action or '22 мая' in action:
-                    date = '22 мая'
-                elif 'get_video_25' in action or '25 мая' in action:
-                    date = '25 мая'
-            
-            # Если дата определена, добавляем пользователя в соответствующий список
-            if date and date in date_to_actions:
-                # Добавляем действие в список для этой даты
-                if action not in date_to_actions[date]:
-                    date_to_actions[date].append(action)
-                
-                # Добавляем пользователя в словарь для этой даты
-                if user_id not in user_date_actions:
-                    user_date_actions[user_id] = []
-                if date not in user_date_actions[user_id]:
-                    user_date_actions[user_id].append(date)
-        
-        # Добавляем фиктивное действие для 18 мая, если нет действий, чтобы всегда показывать эту дату
-        if not date_to_actions['18 мая']:
-            video_actions.append(('get_video_18 мая', 0))
-            date_to_actions['18 мая'].append('get_video_18 мая')
-        
-        # Жестко задаем порядок отображения дат
-        ordered_dates = ['18 мая', '22 мая', '25 мая']
-        
-        # Обрабатываем каждую дату в заданном порядке
-        for date in ordered_dates:
-            # Получаем список действий для этой даты
-            actions_for_date = date_to_actions[date]
-            
-            # Собираем список пользователей, которые получили запись для этой даты
-            video_users = []
-            
-            # Если это 18 мая и нет действий, оставляем пустой список
-            if date == '18 мая' and not actions_for_date:
-                video_users = []
-            else:
-                # Собираем всех пользователей, которые выполняли действия для этой даты
-                user_ids = []
-                
-                # Собираем ID пользователей, которые получили запись для этой даты
-                for user_id, dates in user_date_actions.items():
-                    if date in dates:
-                        user_ids.append(user_id)
-                
-                # Если есть пользователи, получаем их данные
-                if user_ids:
-                    # Формируем строку с плейсхолдерами для IN
-                    placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(user_ids))
-                    
-                    # Запрашиваем данные пользователей
-                    if db_type == 'postgres':
-                        query = f"""
-                            SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
-                            FROM users u
-                            WHERE u.user_id IN ({placeholders})
-                            ORDER BY u.username
-                        """
-                    else:
-                        query = f"""
-                            SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
-                            FROM users u
-                            WHERE u.user_id IN ({placeholders})
-                            ORDER BY u.username
-                        """
-                    
-                    cursor.execute(query, user_ids)
-                    video_users = cursor.fetchall()
-                
-                # Добавляем статистику для этой даты
-                stats_text += f"Запись занятия {date} получили: {len(video_users)}\n"
-                
-                # Добавляем список пользователей
-                for user in video_users:
-                    username, user_id, first_name, last_name = user
-                    # Формируем отображаемое имя пользователя
-                    if username and username != 'admin':
-                        user_display = "@" + username
-                        # Добавляем имя пользователя, если оно есть
-                        if first_name:
-                            full_name = first_name + (" " + last_name if last_name else "")
-                            user_display += f" ({full_name})"
-                    elif first_name:
-                        full_name = first_name + (" " + last_name if last_name else "")
-                        user_display = full_name + f" (ID: {user_id})"
-                    else:
-                        user_display = "ID: " + str(user_id)
-                    stats_text += "- " + user_display + "\n"
-                
-                # Добавляем пустую строку после каждой группы
-                stats_text += "\n"
-        
-        # Send statistics
-        update.message.reply_text(stats_text)
-        log_action(user_id, 'show_stats', 'admin_command')
-        
-        # Close database connection
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        error_message = "Ошибка при получении статистики: " + str(e)
-        update.message.reply_text(error_message)
-        print("Error in show_stats: " + str(e))
-        
-        # Закрываем соединение с базой данных в случае ошибки, если оно еще открыто
-        try:
-            if conn:
-                conn.close()
-        except:
-            pass
+            logger.error(f"Error fetching ordered_dates for video stats: {e}")
+            ordered_dates = [] # If error, video stats will be empty
+            stats_text += "Ошибка при загрузке дат для статистики видео.\n"
 
-# Message handler
-def handle_message(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = user.id
-    username = user.username
-    
-    # Разрешаем доступ к кнопкам как авторизованным пользователям, так и администраторам
-    if not (is_user_authorized(user_id, username) or is_admin(user_id)):
-        update.message.reply_text(MSG_NOT_AUTHORIZED)
-        return
-    
-    text = update.message.text
-    
-    # Загружаем актуальные настройки кнопок из базы данных
-    buttons_data = load_buttons()
-    
-    # Проверяем нажатие на кнопку 1 (последнее занятие)
-    if text == BUTTON_LATEST_LESSON:
-        # Используем индивидуальный текст сообщения для этой кнопки
-        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
-        update.message.reply_text(MSG_LATEST_LESSON)
-        # Извлекаем дату из текста кнопки
-        date_match = re.search(r'\d{1,2} \w+', BUTTON_LATEST_LESSON)
-        if date_match:
-            lesson_date = date_match.group(0)
-            # Логируем с указанием конкретной даты
-            log_action(user_id, f'get_video_{lesson_date}', BUTTON_LATEST_LESSON)
-        else:
-            # Если не удалось извлечь дату, используем стандартное логирование
-            log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
-    # Проверяем нажатие на кнопку 2 (предыдущее занятие)
-    elif text == BUTTON_PREVIOUS_LESSON:
-        # Используем индивидуальный текст сообщения для этой кнопки
-        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
-        update.message.reply_text(MSG_PREVIOUS_LESSON)
-        # Извлекаем дату из текста кнопки
-        date_match = re.search(r'\d{1,2} \w+', BUTTON_PREVIOUS_LESSON)
-        if date_match:
-            lesson_date = date_match.group(0)
-            # Логируем с указанием конкретной даты
-            log_action(user_id, f'get_video_{lesson_date}', BUTTON_PREVIOUS_LESSON)
-        else:
-            # Если не удалось извлечь дату, используем стандартное логирование
-            log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
-    # Проверяем нажатие на кнопку "Обновить"
-    elif text == BUTTON_REFRESH:
-        # Если нажата кнопка "Обновить", вызываем функцию refresh_keyboard
-        refresh_keyboard(update, context)
-        log_action(user_id, 'refresh_keyboard_button', 'button_click')
-    else:
-        update.message.reply_text(
-            'Пожалуйста, используйте кнопки для доступа к записям занятий.'
-        )
 
-def list_users(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        update.message.reply_text('У вас нет прав для выполнения этой команды.')
-        return
-    
-    conn = sqlite3.connect('filmschool.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY is_admin DESC, registration_date DESC")
-    users = cursor.fetchall()
-    conn.close()
-    
-    if not users:
-        update.message.reply_text('В системе нет зарегистрированных пользователей.')
-        return
-    
-    message = "*Список пользователей:*\n\n"
-    
-    for user in users:
-        user_id, username, first_name, last_name, is_admin = user
-        user_info = f"ID: `{user_id}`\n"
-        
-        if username:
-            user_info += f"Username: @{username}\n"
-        
-        name = ""
-        if first_name:
-            name += first_name
-        if last_name:
-            name += f" {last_name}"
-        
-        if name:
-            user_info += f"Имя: {name}\n"
-        
-        if is_admin:
-            user_info += "*Администратор*\n"
-        
-        message += f"{user_info}\n"
-    
-    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-    log_action(user_id, 'list_users', 'admin_command')
-
-def pending_users(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        update.message.reply_text('У вас нет прав для выполнения этой команды.')
-        return
-    
-    conn = sqlite3.connect('filmschool.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users ORDER BY request_date DESC")
-    users = cursor.fetchall()
-    conn.close()
-    
-    if not users:
-        update.message.reply_text('Нет пользователей, ожидающих регистрации.')
-        return
-    
-    message = "*Пользователи, запросившие доступ:*\n\n"
-    
-    for user in users:
-        user_id, username, first_name, last_name, request_date = user
-        user_info = f"ID: `{user_id}`\n"
-        
-        if username:
-            user_info += f"Username: @{username}\n"
-        
-        name = ""
-        if first_name:
-            name += first_name
-        if last_name:
-            name += f" {last_name}"
-        
-        if name:
-            user_info += f"Имя: {name}\n"
-        
-        user_info += f"Дата запроса: {request_date}\n"
-        user_info += f"Добавить: `/adduser {user_id}`\n"
-        
-        message += f"{user_info}\n"
-    
-    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-    log_action(user_id, 'pending_users', 'admin_command')
-
-def make_admin(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    
-    # Проверяем, что команду выполняет администратор
-    if not is_admin(user_id):
-        update.message.reply_text('У вас нет прав для выполнения этой команды.')
-        return
-    
-    # Проверяем, что указан пользователь для повышения до администратора
-    if not context.args:
-        update.message.reply_text('Пожалуйста, укажите Telegram ID или @username пользователя, которого вы хотите сделать администратором.')
-        return
-    
-    user_identifier = context.args[0]
-    conn, db_type = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Определяем, является ли идентификатор числом (ID) или именем пользователя
-    if user_identifier.isdigit():
-        # Если это ID
-        target_user_id = int(user_identifier)
-        
-        # Проверяем, существует ли пользователь с таким ID
-        if db_type == 'postgres':
-            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = %s", (target_user_id,))
-        else:
-            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = ?", (target_user_id,))
-            
-        user_data = cursor.fetchone()
-        
-        if not user_data:
-            update.message.reply_text(f'Пользователь с ID {target_user_id} не найден.')
-            conn.close()
-            return
-            
-        user_id, username, is_admin_flag = user_data
-        
-        # Проверяем, не является ли пользователь уже администратором
-        if db_type == 'postgres':
-            is_admin_value = is_admin_flag is True
-        else:
-            is_admin_value = is_admin_flag == 1
-            
-        if is_admin_value:
-            update.message.reply_text(f'Пользователь с ID {target_user_id} уже является администратором.')
-            conn.close()
-            return
-        
-        # Делаем пользователя администратором
-        if db_type == 'postgres':
-            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
-        else:
-            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
-        conn.commit()
-        
-        username_str = f'@{username}' if username else ''
-        
-        # Создаем сообщение о назначении администратором
-        admin_message = f'''✅ Пользователь {username_str} (ID: {target_user_id}) успешно назначен администратором.
-
-ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
-        
-        update.message.reply_text(admin_message)
-        log_action(user_id, 'make_admin', f'target_user_id:{target_user_id}')
-        
-    elif user_identifier.startswith('@'):
-        # Если это @username
-        username = user_identifier[1:]  # Убираем символ @
-        
-        # Находим пользователя по имени
-        if db_type == 'postgres':
-            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = %s", (username,))
-        else:
-            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
-            
-        user_data = cursor.fetchone()
-        
-        if not user_data:
-            update.message.reply_text(f'Пользователь @{username} не найден.')
-            conn.close()
-            return
-            
-        target_user_id, is_admin_flag = user_data
-        
-        # Проверяем, не является ли пользователь уже администратором
-        if db_type == 'postgres':
-            is_admin_value = is_admin_flag is True
-        else:
-            is_admin_value = is_admin_flag == 1
-            
-        if is_admin_value:
-            update.message.reply_text(f'Пользователь @{username} уже является администратором.')
-            conn.close()
-            return
-        
-        # Делаем пользователя администратором
-        if db_type == 'postgres':
-            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
-        else:
-            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
-        conn.commit()
-        
-        # Создаем сообщение о назначении администратором
-        admin_message = f'''✅ Пользователь @{username} (ID: {target_user_id}) успешно назначен администратором.
-
-ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
-        
-        update.message.reply_text(admin_message)
-        log_action(user_id, 'make_admin', f'target_username:@{username}')
-        
-    else:
-        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
-    
-    conn.close()
-
-def whois(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        update.message.reply_text("У вас нет прав для выполнения этой команды.")
-        return
-    
-    # Проверяем, что передан параметр
-    if not context.args:
-        update.message.reply_text("Укажите ID или @username пользователя. Например: /whois 123456789 или /whois @username")
-        return
-    
-    user_identifier = context.args[0]
-    
-    try:
-        conn, db_type = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Определяем, это ID или username
-        if user_identifier.isdigit():
-            # Это ID
-            if db_type == 'postgres':
-                cursor.execute("""
-                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
-                    (SELECT COUNT(*) FROM logs WHERE user_id = %s) as log_count
-                    FROM users WHERE user_id = %s
-                """, (user_identifier, user_identifier))
-            else:
-                cursor.execute("""
-                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
-                    (SELECT COUNT(*) FROM logs WHERE user_id = ?) as log_count
-                    FROM users WHERE user_id = ?
-                """, (user_identifier, user_identifier))
-        elif user_identifier.startswith('@'):
-            # Это username
-            username = user_identifier[1:]  # Убираем @
-            if db_type == 'postgres':
-                cursor.execute("""
-                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
-                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
-                    FROM users WHERE username = %s
-                """, (username,))
-            else:
-                cursor.execute("""
-                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
-                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
-                    FROM users WHERE username = ?
-                """, (username,))
-        else:
-            # Попробуем найти по username без @
-            if db_type == 'postgres':
-                cursor.execute("""
-                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
-                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
-                    FROM users WHERE username = %s
-                """, (user_identifier,))
-            else:
-                cursor.execute("""
-                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
-                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
-                    FROM users WHERE username = ?
-                """, (user_identifier,))
-        
-        user_data = cursor.fetchone()
-        
-        if not user_data:
-            update.message.reply_text(f"Пользователь {user_identifier} не найден.")
-            conn.close()
-            return
-        
-        user_id, username, first_name, last_name, registration_date, is_admin, log_count = user_data
-        
-        # Получаем дополнительную информацию о действиях пользователя
-        # Последние 5 действий
-        if db_type == 'postgres':
-            cursor.execute("""
-                SELECT action, action_data, timestamp 
-                FROM logs 
-                WHERE user_id = %s 
-                ORDER BY timestamp DESC 
-                LIMIT 5
-            """, (user_id,))
-        else:
-            cursor.execute("""
-                SELECT action, action_data, timestamp 
-                FROM logs 
-                WHERE user_id = ? 
-                ORDER BY timestamp DESC 
-                LIMIT 5
-            """, (user_id,))
-        
-        recent_actions = cursor.fetchall()
-        
-        # Получаем статистику по записям занятий
-        if db_type == 'postgres':
-            cursor.execute("""
-                SELECT COUNT(*) FROM logs 
-                WHERE user_id = %s AND action = 'get_latest_video'
-            """, (user_id,))
-        else:
-            cursor.execute("""
-                SELECT COUNT(*) FROM logs 
-                WHERE user_id = ? AND action = 'get_latest_video'
-            """, (user_id,))
-        latest_video_count = cursor.fetchone()[0]
-        
-        if db_type == 'postgres':
-            cursor.execute("""
-                SELECT COUNT(*) FROM logs 
-                WHERE user_id = %s AND action = 'get_previous_video'
-            """, (user_id,))
-        else:
-            cursor.execute("""
-                SELECT COUNT(*) FROM logs 
-                WHERE user_id = ? AND action = 'get_previous_video'
-            """, (user_id,))
-        previous_video_count = cursor.fetchone()[0]
-        
-        conn.close()
-        
-        # Формируем сообщение с информацией о пользователе
-        message_text = f"Информация о пользователе:\n\n"
-        message_text += f"ID: {user_id}\n"
-        
-        if username:
-            message_text += f"Username: @{username}\n"
-        
-        if first_name or last_name:
-            full_name = (first_name or "") + (" " + last_name if last_name else "")
-            message_text += f"Имя: {full_name}\n"
-        
-        if registration_date:
-            message_text += f"Дата регистрации: {registration_date}\n"
-        
-        # Проверяем статус администратора
-        is_admin_text = "Да" if (is_admin == 1 or is_admin is True) else "Нет"
-        message_text += f"Администратор: {is_admin_text}\n"
-        
-        # Статистика активности
-        message_text += f"Всего действий: {log_count}\n"
-        message_text += f"Запросов записи 18 мая: {latest_video_count}\n"
-        message_text += f"Запросов записи 22 мая: {previous_video_count}\n\n"
-        
-        # Последние действия
-        if recent_actions:
-            message_text += "Последние действия:\n"
-            for action, action_data, timestamp in recent_actions:
-                message_text += f"- {timestamp}: {action}\n"
-        
-        update.message.reply_text(message_text)
-        log_action(user_id, 'whois', f'target:{user_identifier}')
-    except Exception as e:
-        error_message = f"Ошибка при получении информации о пользователе: {e}"
-        update.message.reply_text(error_message)
-        print(f"Error in whois: {e}")
-
-def show_user_lists(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        update.message.reply_text("У вас нет прав для выполнения этой команды.")
-        return
-    
-    try:
-        conn, db_type = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Get list of administrators with all fields
-        if db_type == 'postgres':
-            cursor.execute("SELECT username, user_id, first_name, last_name FROM users WHERE is_admin = TRUE ORDER BY username")
-        else:
-            cursor.execute("SELECT username, user_id, first_name, last_name FROM users WHERE is_admin = 1 ORDER BY username")
-        admins_list = cursor.fetchall()
-        
-        # Get list of users who started the bot
-        if db_type == 'postgres':
-            cursor.execute("""
-                SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
-                FROM logs l 
-                JOIN users u ON l.user_id = u.user_id 
-                ORDER BY u.username NULLS LAST, u.first_name NULLS LAST, u.user_id
-            """)
-        else:
-            # SQLite не поддерживает NULLS LAST, используем более простой запрос
-            cursor.execute("""
-                SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
-                FROM logs l 
-                JOIN users u ON l.user_id = u.user_id 
-                ORDER BY u.username, u.first_name, u.user_id
-            """)
-        active_users = cursor.fetchall()
-        
-        conn.close()
-        
-        # Format the message
-        message_text = "Списки пользователей\n\n"
-        
-        # Add list of administrators
-        message_text += "Администраторы:\n"
-        
-        # Проверка на наличие администраторов
-        if not admins_list:
-            message_text += "- Администраторы не найдены\n"
-        else:
-            for admin in admins_list:
-                username, admin_id, first_name, last_name = admin
-                # Формируем отображаемое имя администратора, используя доступную информацию
-                if username and username != 'admin':
-                    admin_display = "@" + username
-                    # Добавляем имя пользователя, если оно есть
-                    if first_name:
-                        full_name = first_name + (" " + last_name if last_name else "")
-                        admin_display += f" ({full_name})"
-                elif first_name:
-                    admin_display = first_name + (" " + last_name if last_name else "") + f" (ID: {admin_id})"
-                else:
-                    admin_display = "ID: " + str(admin_id)
-                message_text += "- " + admin_display + "\n"
-        message_text += "\n"
-        
-        # Add list of active users
-        message_text += "Пользователи, запустившие бота:\n"
-        
-        # Проверка на наличие активных пользователей
-        if not active_users:
-            message_text += "- Активные пользователи не найдены\n"
-        else:
-            for user in active_users:
-                username, user_id, first_name, last_name = user
-                # Формируем отображаемое имя пользователя, используя доступную информацию
-                if username and username != 'admin':
-                    user_display = "@" + username
-                    # Добавляем имя пользователя, если оно есть
-                    if first_name:
-                        full_name = first_name + (" " + last_name if last_name else "")
-                        user_display += f" ({full_name})"
-                elif first_name:
-                    user_display = first_name + (" " + last_name if last_name else "") + f" (ID: {user_id})"
-                else:
-                    user_display = "ID: " + str(user_id)
-                message_text += "- " + user_display + "\n"
-        
-        # Send the message
-        update.message.reply_text(message_text)
-        log_action(user_id, 'show_user_lists', 'admin_command')
-    except Exception as e:
-        error_message = "Ошибка при получении списков пользователей: " + str(e)
-        update.message.reply_text(error_message)
-        print("Error in show_user_lists: " + str(e))
-
-# Глобальная переменная для хранения экземпляра Updater
-global_updater = None
-
-# Функция для корректного завершения работы бота
-def shutdown_bot(signal_number=None, frame=None):
-    print("Получен сигнал завершения. Корректно завершаем работу бота...")
-    global global_updater
-    
-    # Удаляем файл блокировки
-    remove_lock_file()
-    
-    if global_updater:
-        print("Останавливаем бота...")
-        global_updater.stop()
-        print("Бот остановлен.")
-    sys.exit(0)
-
-# Путь к файлу блокировки
-LOCK_FILE = '/tmp/tombot_lock'
-
-# Функция для проверки и создания файла блокировки
-def check_lock_file():
-    # Проверяем, существует ли файл блокировки
-    if os.path.exists(LOCK_FILE):
-        try:
-            # Проверяем время создания файла
-            file_time = os.path.getmtime(LOCK_FILE)
-            current_time = time.time()
-            
-            # Если файл старше 1 часа, удаляем его (считаем, что предыдущий процесс завис)
-            if current_time - file_time > 3600:  # 3600 секунд = 1 час
-                os.remove(LOCK_FILE)
-                logger.warning(f'Удален устаревший файл блокировки ({current_time - file_time:.1f} сек. назад)')
-            else:
-                # Если файл свежий, значит другой экземпляр бота уже запущен
-                logger.error(f'Обнаружен файл блокировки ({current_time - file_time:.1f} сек. назад). Возможно, другой экземпляр бота уже запущен.')
-                sys.exit(1)
-        except Exception as e:
-            logger.error(f'Ошибка при проверке файла блокировки: {e}')
-            # Удаляем файл блокировки в случае ошибки
+        if ordered_dates:
+            stats_text += "<b>Статистика по видео (кто получил запись):</b>\n"
+            # Gather user actions by dates
+            user_date_actions = defaultdict(lambda: defaultdict(list))
             try:
-                os.remove(LOCK_FILE)
-            except:
-                pass
-    
-    # Создаем новый файл блокировки
-    try:
-        with open(LOCK_FILE, 'w') as f:
-            f.write(str(os.getpid()))
-        logger.info(f'Создан файл блокировки: {LOCK_FILE}')
-    except Exception as e:
-        logger.error(f'Ошибка при создании файла блокировки: {e}')
-
-# Функция для удаления файла блокировки при завершении работы бота
-def remove_lock_file():
-    try:
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
-            logger.info(f'Файл блокировки удален: {LOCK_FILE}')
-    except Exception as e:
-        logger.error(f'Ошибка при удалении файла блокировки: {e}')
-
-def main() -> None:
-    global global_updater
-    
-    # Проверяем и создаем файл блокировки
-    check_lock_file()
-    
-    # Регистрируем обработчики сигналов для корректного завершения работы
-    signal.signal(signal.SIGINT, shutdown_bot)  # Ctrl+C
-    signal.signal(signal.SIGTERM, shutdown_bot)  # Сигнал завершения от системы
-    
-    # Initialize database with all required tables
-    try:
-        init_database()
-        print("База данных успешно инициализирована")
-    except Exception as e:
-        print(f"Ошибка при инициализации базы данных: {e}")
-    
-    # Setup database
-    setup_database()
-    
-    # Load button settings from database
-    load_buttons_from_db()
-    
-    # Get token from environment variable
-    token = os.environ.get('TELEGRAM_TOKEN')
-    if not token:
-        logger.error("No token provided. Set the TELEGRAM_TOKEN environment variable.")
-        return
-    
-    # Create the Updater with increased timeout and retry settings
-    updater = Updater(token, request_kwargs={'read_timeout': 30, 'connect_timeout': 30}, use_context=True)
-    global_updater = updater
-    
-    # Get the dispatcher to register handlers
-    dispatcher = updater.dispatcher
-    
-    # Register command handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(CommandHandler("refresh", refresh_keyboard))
-    dispatcher.add_handler(CommandHandler("adduser", add_user))
-    dispatcher.add_handler(CommandHandler("addusers", add_users))
-    dispatcher.add_handler(CommandHandler("removeuser", remove_user))
-    dispatcher.add_handler(CommandHandler("updatevideo", update_video))
-    dispatcher.add_handler(CommandHandler("stats", show_stats))
-    dispatcher.add_handler(CommandHandler("actions", show_actions))
-    dispatcher.add_handler(CommandHandler("listusers", list_users))
-    dispatcher.add_handler(CommandHandler("users", list_users))
-    dispatcher.add_handler(CommandHandler("checkusers", check_users))
-    dispatcher.add_handler(CommandHandler("diagnosedb", diagnose_db))
-    dispatcher.add_handler(CommandHandler("initdb", init_db_command))
-    dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
-    dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
-    dispatcher.add_handler(CommandHandler("userlists", show_user_lists))
-    dispatcher.add_handler(CommandHandler("whois", whois))
-    
-    # Register button update command handlers
-    dispatcher.add_handler(CommandHandler("button1", update_button))
-    dispatcher.add_handler(CommandHandler("button2", update_button))
-    
-    # Register message handler
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    
-    # Добавляем обработчик ошибок для обработки конфликтов
-    def error_handler(update, context):
-        error = context.error
-        logger.error(f'Ошибка при обработке обновления: {error}')
-        
-        # Проверяем, является ли ошибка конфликтом
-        if 'Conflict' in str(error):
-            logger.warning('Обнаружен конфликт с другим экземпляром бота. Завершаем работу...')
-            shutdown_bot()
-    
-    # Регистрируем обработчик ошибок
-    dispatcher.add_error_handler(error_handler)
-    
-    # Start the Bot with error handling
-    try:
-        # Увеличиваем время между повторными попытками при ошибках и очищаем очередь обновлений
-        updater.start_polling(poll_interval=1.0, timeout=30, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
-        
-        # Log that the bot has started
-        logger.info('Bot started')
-        
-        # Run the bot until you press Ctrl-C or the process receives SIGINT,
-        # SIGTERM or SIGABRT. This should be used most of the time, since
-        # start_polling() is non-blocking and will stop the bot gracefully.
-        updater.idle()
-    except Exception as e:
-        logger.error(f'Ошибка при запуске бота: {e}')
-        # Если произошла ошибка конфликта, попробуем корректно завершить работу
-        if 'Conflict' in str(e):
-            logger.warning('Обнаружен конфликт с другим экземпляром бота. Завершаем работу...')
-            shutdown_bot()
-        else:
-            # Для других ошибок просто логируем и завершаем
-            logger.error(f'Неожиданная ошибка: {e}')
-            shutdown_bot()
-
-if __name__ == '__main__':
-    main()
+                if db_type == 'postgres':
+                    cursor.execute("SELECT user_id, SUBSTRING(action_data FROM 'get_video_(.*)') as video_date FROM user_actions WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL")
+                else:
+                    cursor.execute("SELECT user_id, SUBSTR(action_data, LENGTH('get_video_') + 1) as video_date FROM user_actions WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL")
+                
+                user_actions_rows = cursor.fetchall()
+                for u_id, video_date_str in user_actions_rows:
+                    if video_date_str: # Make sure video_date_str is not None
+                        user_date_actions[u_id][video_date_str].append('get_video')
+            except Exception as e:
+                logger.error(f"Error fetching user_actions for video_stats: {e}")
+                stats_text += "Ошибка при загрузке действий пользователей для статистики видео.\n"
+{{ ... }}

@@ -1388,24 +1388,45 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         # Проверяем наличие столбца is_active в зависимости от типа базы данных
         try:
             if db_type == 'postgres':
-                # В PostgreSQL проверяем наличие столбца is_active
-                cursor.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'is_active'
-                """)
-                has_is_active = cursor.fetchone() is not None
+                # Для PostgreSQL используем новое соединение для каждого запроса, чтобы избежать проблем с транзакциями
+                # Закрываем текущее соединение
+                cursor.close()
+                conn.close()
                 
-                if has_is_active:
-                    cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+                # Создаем новое соединение
+                result = get_db_connection()
+                if isinstance(result, tuple) and len(result) == 2:
+                    conn, db_type = result
                 else:
-                    # Если столбца нет, считаем всех пользователей активными
-                    cursor.execute("SELECT COUNT(*) FROM users")
+                    update.message.reply_text("Ошибка при подключении к базе данных")
+                    return
+                
+                cursor = conn.cursor()
+                
+                # Проверяем наличие столбца is_active
+                try:
+                    cursor.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'users' AND column_name = 'is_active'
+                    """)
+                    has_is_active = cursor.fetchone() is not None
+                    
+                    if has_is_active:
+                        cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+                    else:
+                        # Если столбца нет, считаем всех пользователей активными
+                        cursor.execute("SELECT COUNT(*) FROM users")
+                    
+                    active_users = cursor.fetchone()[0]
+                except Exception as e:
+                    print(f"Error checking is_active column: {e}")
+                    # Если возникла ошибка, считаем всех пользователей активными
+                    active_users = total_users
             else:
                 # Для SQLite используем оригинальный запрос
                 cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
-            
-            active_users = cursor.fetchone()[0]
+                active_users = cursor.fetchone()[0]
         except Exception as e:
             # Если возникла ошибка, считаем всех пользователей активными
             print(f"Error getting active users: {e}")
@@ -1414,24 +1435,44 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         # Получаем количество администраторов
         try:
             if db_type == 'postgres':
-                # В PostgreSQL проверяем наличие столбца is_admin
-                cursor.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'is_admin'
-                """)
-                has_is_admin = cursor.fetchone() is not None
+                # Для PostgreSQL используем новое соединение для каждого запроса
+                # Закрываем текущее соединение
+                cursor.close()
+                conn.close()
                 
-                if has_is_admin:
-                    cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+                # Создаем новое соединение
+                result = get_db_connection()
+                if isinstance(result, tuple) and len(result) == 2:
+                    conn, db_type = result
                 else:
-                    # Если столбца нет, считаем что администраторов нет
+                    update.message.reply_text("Ошибка при подключении к базе данных")
+                    return
+                
+                cursor = conn.cursor()
+                
+                # Проверяем наличие столбца is_admin
+                try:
+                    cursor.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'users' AND column_name = 'is_admin'
+                    """)
+                    has_is_admin = cursor.fetchone() is not None
+                    
+                    if has_is_admin:
+                        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+                        admin_count = cursor.fetchone()[0]
+                    else:
+                        # Если столбца нет, считаем что администраторов нет
+                        admin_count = 0
+                except Exception as e:
+                    print(f"Error checking is_admin column: {e}")
+                    # Если возникла ошибка, считаем что администраторов нет
                     admin_count = 0
             else:
                 # Для SQLite используем оригинальный запрос
                 cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
-            
-            admin_count = cursor.fetchone()[0]
+                admin_count = cursor.fetchone()[0]
         except Exception as e:
             # Если возникла ошибка, считаем что администраторов нет
             print(f"Error getting admin count: {e}")
@@ -1451,20 +1492,40 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         admins = []
         try:
             if db_type == 'postgres':
-                # В PostgreSQL проверяем наличие столбца is_admin
-                cursor.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'is_admin'
-                """)
-                has_is_admin = cursor.fetchone() is not None
+                # Для PostgreSQL используем новое соединение для каждого запроса
+                # Закрываем текущее соединение
+                cursor.close()
+                conn.close()
                 
-                if has_is_admin:
-                    cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
-                    admins = cursor.fetchall()
+                # Создаем новое соединение
+                result = get_db_connection()
+                if isinstance(result, tuple) and len(result) == 2:
+                    conn, db_type = result
                 else:
-                    # Если столбца нет, добавляем стандартных администраторов
-                    # Добавляем администратора по умолчанию
+                    update.message.reply_text("Ошибка при подключении к базе данных")
+                    return
+                
+                cursor = conn.cursor()
+                
+                # Проверяем наличие столбца is_admin
+                try:
+                    cursor.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'users' AND column_name = 'is_admin'
+                    """)
+                    has_is_admin = cursor.fetchone() is not None
+                    
+                    if has_is_admin:
+                        cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
+                        admins = cursor.fetchall()
+                    else:
+                        # Если столбца нет, добавляем стандартных администраторов
+                        # Добавляем администратора по умолчанию
+                        admins = [("admin", "Admin", ""), ("ilya_tomashevich", "Ilya", "Tomashevich")]
+                except Exception as e:
+                    print(f"Error getting admin list: {e}")
+                    # Если возникла ошибка, добавляем стандартных администраторов
                     admins = [("admin", "Admin", ""), ("ilya_tomashevich", "Ilya", "Tomashevich")]
             else:
                 # Для SQLite используем оригинальный запрос
@@ -1555,14 +1616,34 @@ def show_stats(update: Update, context: CallbackContext) -> None:
             '25 мая': []
         }
         
-        # Запрашиваем все действия из логов, связанные с получением видео
-        cursor.execute("""
-            SELECT DISTINCT user_id, action, action_data
-            FROM logs
-            WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
-        """)
+        # Для PostgreSQL используем новое соединение для каждого запроса
+        if db_type == 'postgres':
+            # Закрываем текущее соединение
+            cursor.close()
+            conn.close()
+            
+            # Создаем новое соединение
+            result = get_db_connection()
+            if isinstance(result, tuple) and len(result) == 2:
+                conn, db_type = result
+            else:
+                update.message.reply_text("Ошибка при подключении к базе данных")
+                return
+            
+            cursor = conn.cursor()
         
-        user_actions = cursor.fetchall()
+        # Запрашиваем все действия из логов, связанные с получением видео
+        try:
+            cursor.execute("""
+                SELECT DISTINCT user_id, action, action_data
+                FROM logs
+                WHERE action LIKE 'get_video%' OR action = 'get_latest_video' OR action = 'get_previous_video'
+            """)
+            
+            user_actions = cursor.fetchall()
+        except Exception as e:
+            print(f"Error getting video actions: {e}")
+            user_actions = []
         
         # Создаем словарь пользователей и их действий по датам
         user_date_actions = {}

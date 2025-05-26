@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 import pytz
 import logging
+from names_loader import NamesLoader
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -36,18 +37,25 @@ class VideoDownloadsAnalyzer:
         self.conn = None
         self.cursor = None
         
-        # Определяем известные даты занятий
-        self.known_dates = ['18 мая', '22 мая', '25 мая']
+        # Загрузим данные о пользователях из CSV
+        try:
+            self.names_loader = NamesLoader()
+            logger.info("Данные о пользователях успешно загружены")
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке данных о пользователях: {e}")
+            self.names_loader = None
         
-        # Маппинг действий к датам
+        # Соответствие действий датам
         self.action_to_date_map = {
-            'get_video_2': '18 мая',
             'get_video_18 мая': '18 мая',
-            'get_previous_video': '22 мая',
+            'get_latest_video': '18 мая',  # Последнее видео - это 18 мая
             'get_video_22 мая': '22 мая',
-            'get_latest_video': '25 мая',
+            'get_previous_video': '22 мая',  # Предыдущее видео - это 22 мая
             'get_video_25 мая': '25 мая'
         }
+        
+        # Известные даты занятий
+        self.known_dates = ['18 мая', '22 мая', '25 мая']
     
     def connect(self):
         """Подключение к базе данных"""
@@ -190,9 +198,20 @@ class VideoDownloadsAnalyzer:
                     for user_row in users:
                         username, user_id, first_name, last_name = user_row
                         
+                        # Ищем полное имя пользователя в нашем файле names.csv
+                        full_name_from_csv = None
+                        if username and self.names_loader:
+                            full_name_from_csv = self.names_loader.get_full_name(username)
+                            if full_name_from_csv:
+                                logger.info(f"Найдено полное имя для @{username}: {full_name_from_csv}")
+                        
                         # Формируем отображаемое имя
                         if username:
-                            display_name = f"@{username}"
+                            # Если есть полное имя из CSV, добавляем его к нику
+                            if full_name_from_csv:
+                                display_name = f"@{username} ({full_name_from_csv})"
+                            else:
+                                display_name = f"@{username}"
                         elif first_name:
                             display_name = f"{first_name}{' ' + last_name if last_name else ''}"
                         else:
@@ -204,7 +223,8 @@ class VideoDownloadsAnalyzer:
                             'username': username,
                             'first_name': first_name,
                             'last_name': last_name,
-                            'display_name': display_name
+                            'display_name': display_name,
+                            'full_name_from_csv': full_name_from_csv
                         }
                         
                         result[date].append(user_info)

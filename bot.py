@@ -574,7 +574,7 @@ def add_user(update: Update, context: CallbackContext) -> None:
                     cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, phone_number, registration_date) VALUES (%s, %s, %s, %s, %s, %s)", 
                                    (user_id_data, username_data, first_name, last_name, phone_number_data, now))
                     
-                    # Удаляем из ожидающих
+                    # Удаляем из pending_users
                     cursor.execute("DELETE FROM pending_users WHERE user_id = %s", (user_id_data,))
                 else:
                     cursor.execute("INSERT INTO users (user_id, username, first_name, last_name, phone_number, registration_date) VALUES (?, ?, ?, ?, ?, ?)", 
@@ -1034,17 +1034,17 @@ def show_actions(update: Update, context: CallbackContext) -> None:
     conn.close()
     
     # Format actions list
-    actions_text = f"*Последние действия:*\n\n"
+    actions_text = f'*Последние действия:*\n\n'
     
     for action in recent_actions:
         username, user_id, action_type, action_data, timestamp = action
-        user_display = f"ID: `{user_id}`" if username is None else f"@{username}"
-        action_info = f"{action_type}"
+        user_display = f'@{username}' if username else f'ID: {user_id}'
+        action_info = f'{action_type}'
         if action_data:
             # Экранируем специальные символы Markdown
             safe_action_data = action_data.replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
-            action_info += f" ({safe_action_data})"
-        actions_text += f"- {user_display}: {action_info} ({timestamp})\n"
+            action_info += f' ({safe_action_data})'
+        actions_text += f'- {user_display}: {action_info} ({timestamp})\n'
     
     update.message.reply_text(actions_text, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'show_actions', 'admin_command')
@@ -1267,11 +1267,6 @@ def list_users(update: Update, context: CallbackContext) -> None:
         update.message.reply_text('У вас нет прав для выполнения этой команды.')
         return
     
-    # Получаем опциональный параметр команды - количество пользователей для отображения
-    limit = 10  # По умолчанию показываем только 10 пользователей
-    if context.args and context.args[0].isdigit():
-        limit = int(context.args[0])
-    
     conn, db_type = get_db_connection()
     cursor = conn.cursor()
     
@@ -1281,9 +1276,9 @@ def list_users(update: Update, context: CallbackContext) -> None:
     
     # Получаем список пользователей с ограничением
     if db_type == 'postgres':
-        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT %s", (limit,))
+        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT %s", (10,))
     else:
-        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT ?", (limit,))
+        cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY username LIMIT ?", (10,))
     
     users = cursor.fetchall()
     conn.close()
@@ -1299,11 +1294,12 @@ def list_users(update: Update, context: CallbackContext) -> None:
             user_display = f"@{username}" if username else f"ID: {user_id}"
             
             if first_name or last_name:
-                name = f"{first_name or ''} {last_name or ''}" .strip()
-                if username:
-                    user_display += f" ({name})"
-                else:
-                    user_display = f"{name} ({user_display})"
+                name = ""
+                if first_name:
+                    name += first_name
+                if last_name:
+                    name += f" {last_name}"
+                user_display += f" ({name})"
             
             # Добавляем метку администратора
             if is_admin:
@@ -1312,43 +1308,14 @@ def list_users(update: Update, context: CallbackContext) -> None:
             message += f"{i}. {user_display}\n"
         
         # Если есть еще пользователи, которые не поместились в ограничение
-        if total_users > limit:
-            message += f"\nИ еще {total_users - limit} пользователей..."
+        if total_users > 10:
+            message += f"\nИ еще {total_users - 10} пользователей..."
             message += f"\n\nДля просмотра большего количества пользователей используйте команду /users <количество>"
     else:
         message += "Пользователи не найдены."
     
     update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
     log_action(user_id, 'list_users', 'admin_command')
-
-def get_previous_video(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = user.id
-    username = user.username
-    
-    if not is_user_authorized(user_id, username):
-        update.message.reply_text(MSG_NOT_AUTHORIZED)
-        return
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT title, url, upload_date FROM videos ORDER BY upload_date DESC LIMIT 2")
-    videos = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    
-    if len(videos) >= 2:
-        title, url, date = videos[1]  # Second video is the previous one
-        update.message.reply_text(
-            f'*{title}*\n\n'
-            f'Дата загрузки: {date}\n\n'
-            f'Ссылка: {url}',
-            parse_mode=ParseMode.MARKDOWN
-        )
-        log_action(user_id, 'get_previous_video', 'Запись занятия 22 мая')
-    else:
-        update.message.reply_text('Предыдущее занятие пока не доступно. Пожалуйста, попробуйте позже.')
 
 def show_stats(update: Update, context: CallbackContext) -> None:
     """Показать статистику использования бота"""
@@ -1360,115 +1327,28 @@ def show_stats(update: Update, context: CallbackContext) -> None:
 
     try:
         # Подключаемся к базе данных
-        result = get_db_connection()
-        
-        # Функция get_db_connection возвращает кортеж (conn, db_type)
-        if isinstance(result, tuple) and len(result) == 2:
-            conn, db_type = result
-        else:
-            # Если функция вернула неожиданный результат
-            update.message.reply_text("Ошибка при подключении к базе данных: неверный формат соединения")
-            return
-        
+        conn = get_db_connection()
         cursor = conn.cursor()
+
+        # Определяем тип базы данных
+        db_type = 'sqlite'
+        try:
+            cursor.execute("SELECT version()")
+            db_type = 'postgres'
+        except:
+            pass
 
         # Получаем общее количество пользователей
         cursor.execute("SELECT COUNT(*) FROM users")
         total_users = cursor.fetchone()[0]
 
         # Получаем количество активированных пользователей
-        # Проверяем наличие столбца is_active в зависимости от типа базы данных
-        try:
-            if db_type == 'postgres':
-                # Для PostgreSQL используем новое соединение для каждого запроса, чтобы избежать проблем с транзакциями
-                # Закрываем текущее соединение
-                cursor.close()
-                conn.close()
-                
-                # Создаем новое соединение
-                result = get_db_connection()
-                if isinstance(result, tuple) and len(result) == 2:
-                    conn, db_type = result
-                else:
-                    update.message.reply_text("Ошибка при подключении к базе данных")
-                    return
-                
-                cursor = conn.cursor()
-                
-                # Проверяем наличие столбца is_active
-                try:
-                    cursor.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'users' AND column_name = 'is_active'
-                    """)
-                    has_is_active = cursor.fetchone() is not None
-                    
-                    if has_is_active:
-                        cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
-                    else:
-                        # Если столбца нет, считаем всех пользователей активными
-                        cursor.execute("SELECT COUNT(*) FROM users")
-                    
-                    active_users = cursor.fetchone()[0]
-                except Exception as e:
-                    print(f"Error checking is_active column: {e}")
-                    # Если возникла ошибка, считаем всех пользователей активными
-                    active_users = total_users
-            else:
-                # Для SQLite используем оригинальный запрос
-                cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
-                active_users = cursor.fetchone()[0]
-        except Exception as e:
-            # Если возникла ошибка, считаем всех пользователей активными
-            print(f"Error getting active users: {e}")
-            active_users = total_users
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+        active_users = cursor.fetchone()[0]
 
         # Получаем количество администраторов
-        try:
-            if db_type == 'postgres':
-                # Для PostgreSQL используем новое соединение для каждого запроса
-                # Закрываем текущее соединение
-                cursor.close()
-                conn.close()
-                
-                # Создаем новое соединение
-                result = get_db_connection()
-                if isinstance(result, tuple) and len(result) == 2:
-                    conn, db_type = result
-                else:
-                    update.message.reply_text("Ошибка при подключении к базе данных")
-                    return
-                
-                cursor = conn.cursor()
-                
-                # Проверяем наличие столбца is_admin
-                try:
-                    cursor.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'users' AND column_name = 'is_admin'
-                    """)
-                    has_is_admin = cursor.fetchone() is not None
-                    
-                    if has_is_admin:
-                        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
-                        admin_count = cursor.fetchone()[0]
-                    else:
-                        # Если столбца нет, считаем что администраторов нет
-                        admin_count = 0
-                except Exception as e:
-                    print(f"Error checking is_admin column: {e}")
-                    # Если возникла ошибка, считаем что администраторов нет
-                    admin_count = 0
-            else:
-                # Для SQLite используем оригинальный запрос
-                cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
-                admin_count = cursor.fetchone()[0]
-        except Exception as e:
-            # Если возникла ошибка, считаем что администраторов нет
-            print(f"Error getting admin count: {e}")
-            admin_count = 0
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+        admin_count = cursor.fetchone()[0]
 
         # Получаем количество неактивированных пользователей
         inactive_users = total_users - active_users
@@ -1481,53 +1361,8 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         stats_text += f"Добавлено, но не запустили бота: {inactive_users}\n\n"
 
         # Получаем список администраторов
-        admins = []
-        try:
-            if db_type == 'postgres':
-                # Для PostgreSQL используем новое соединение для каждого запроса
-                # Закрываем текущее соединение
-                cursor.close()
-                conn.close()
-                
-                # Создаем новое соединение
-                result = get_db_connection()
-                if isinstance(result, tuple) and len(result) == 2:
-                    conn, db_type = result
-                else:
-                    update.message.reply_text("Ошибка при подключении к базе данных")
-                    return
-                
-                cursor = conn.cursor()
-                
-                # Проверяем наличие столбца is_admin
-                try:
-                    cursor.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'users' AND column_name = 'is_admin'
-                    """)
-                    has_is_admin = cursor.fetchone() is not None
-                    
-                    if has_is_admin:
-                        cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
-                        admins = cursor.fetchall()
-                    else:
-                        # Если столбца нет, добавляем стандартных администраторов
-                        # Добавляем администратора по умолчанию
-                        admins = [("admin", "Admin", ""), ("ilya_tomashevich", "Ilya", "Tomashevich")]
-                except Exception as e:
-                    print(f"Error getting admin list: {e}")
-                    # Если возникла ошибка, добавляем стандартных администраторов
-                    admins = [("admin", "Admin", ""), ("ilya_tomashevich", "Ilya", "Tomashevich")]
-            else:
-                # Для SQLite используем оригинальный запрос
-                cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
-                admins = cursor.fetchall()
-        except Exception as e:
-            # Если возникла ошибка, добавляем стандартных администраторов
-            print(f"Error getting admin list: {e}")
-            # Добавляем администратора по умолчанию
-            admins = [("admin", "Admin", ""), ("ilya_tomashevich", "Ilya", "Tomashevich")]
+        cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
+        admins = cursor.fetchall()
 
         # Добавляем список администраторов
         stats_text += "Список администраторов:\n"
@@ -1541,111 +1376,784 @@ def show_stats(update: Update, context: CallbackContext) -> None:
 
         stats_text += "\n"
 
-        # --- Refresh PostgreSQL connection for video stats ---
-        if db_type == 'postgres':
-            logger.info("Refreshing connection for video stats in show_stats (PostgreSQL)")
-            if 'cursor' in locals() and cursor:
-                try:
-                    cursor.close()
-                except Exception as e_cursor:
-                    logger.warning(f"Error closing cursor before video stats: {e_cursor}")
-            if 'conn' in locals() and conn:
-                try:
-                    conn.close()
-                except Exception as e_conn:
-                    logger.warning(f"Error closing connection before video stats: {e_conn}")
+        # Жестко задаем порядок отображения дат и их соответствующие action_data строки
+        # и специфичные action-имена
+        lesson_configs = {
+            '18 мая': {
+                'action_data_pattern': 'Запись занятия 18 мая',
+                'specific_actions': ['get_video_2', 'get_video_18 мая'] # Добавлено 'get_video_18 мая' для надежности
+            },
+            '22 мая': {
+                'action_data_pattern': 'Запись занятия 22 мая',
+                'specific_actions': ['get_previous_video', 'get_video_22 мая']
+            },
+            '25 мая': {
+                'action_data_pattern': 'Запись занятия 25 мая',
+                'specific_actions': ['get_latest_video', 'get_video_25 мая']
+            }
+        }
+        ordered_dates = ['18 мая', '22 мая', '25 мая']
+
+        for date_str in ordered_dates:
+            config = lesson_configs[date_str]
+            action_data_pattern = config['action_data_pattern']
+            specific_actions = config['specific_actions']
+
+            # Формируем условия для WHERE clause
+            conditions = []
+            params = []
+
+            # Условие для action_data
+            conditions.append(f"l.action_data = %s" if db_type == 'postgres' else f"l.action_data = ?")
+            params.append(action_data_pattern)
+
+            # Условия для specific_actions
+            if specific_actions:
+                placeholders = ', '.join(['%s' if db_type == 'postgres' else '?'] * len(specific_actions))
+                conditions.append(f"l.action IN ({placeholders})")
+                params.extend(specific_actions)
             
-            # Create a new connection for video stats
-            result = get_db_connection()
-            if isinstance(result, tuple) and len(result) == 2:
-                conn, db_type = result # Update conn and db_type (although db_type should remain postgres)
-            else:
-                update.message.reply_text("Ошибка при подключении к базе данных для получения видеостатистики.")
-                if 'conn' in locals() and conn: conn.close() # Close if something went wrong
-                return
-            cursor = conn.cursor()
+            where_clause = " OR ".join(f"({c})" for c in conditions) # Оборачиваем каждое условие в скобки для корректного OR
 
-        # Get unique dates from logs for get_video (in correct order)
-        # Use coalesce to handle NULL values that may arise if there are no matches with LIKE
-        # Also add a check that action_data is not NULL to avoid errors with SUBSTRING
-        ordered_dates_query_postgres = """
-            SELECT DISTINCT video_date_str
-            FROM (
-                SELECT CASE 
-                        WHEN action_data LIKE 'get_video_%%' THEN SUBSTRING(action_data FROM 'get_video_(.*)')
-                        ELSE NULL 
-                       END AS video_date_str
-                FROM user_actions 
-                WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL
-            ) AS subquery
-            WHERE video_date_str IS NOT NULL
-            ORDER BY CASE 
-                     WHEN video_date_str LIKE '%% января' THEN 1
-                     WHEN video_date_str LIKE '%% февраля' THEN 2
-                     WHEN video_date_str LIKE '%% марта' THEN 3
-                     WHEN video_date_str LIKE '%% апреля' THEN 4
-                     WHEN video_date_str LIKE '%% мая' THEN 5
-                     WHEN video_date_str LIKE '%% июня' THEN 6
-                     WHEN video_date_str LIKE '%% июля' THEN 7
-                     WHEN video_date_str LIKE '%% августа' THEN 8
-                     WHEN video_date_str LIKE '%% сентября' THEN 9
-                     WHEN video_date_str LIKE '%% октября' THEN 10
-                     WHEN video_date_str LIKE '%% ноября' THEN 11
-                     WHEN video_date_str LIKE '%% декабря' THEN 12
-                     ELSE 13 END,
-                     CAST(COALESCE(SUBSTRING(video_date_str FROM '^[0-9]+'), '0') AS INTEGER)
-        """
-        
-        ordered_dates_query_sqlite = """
-            SELECT DISTINCT SUBSTR(action_data, LENGTH('get_video_') + 1)
-            FROM user_actions 
-            WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL
-            ORDER BY 
-                CASE 
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% января' THEN 1
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% февраля' THEN 2
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% марта' THEN 3
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% апреля' THEN 4
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% мая' THEN 5
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% июня' THEN 6
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% июля' THEN 7
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% августа' THEN 8
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% сентября' THEN 9
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% октября' THEN 10
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% ноября' THEN 11
-                    WHEN SUBSTR(action_data, LENGTH('get_video_') + 1) LIKE '%% декабря' THEN 12
-                    ELSE 13 END,
-                CAST(SUBSTR(SUBSTR(action_data, LENGTH('get_video_') + 1), 1, INSTR(SUBSTR(action_data, LENGTH('get_video_') + 1), ' ') - 1) AS INTEGER)
-        """
+            query = f"""
+                SELECT DISTINCT l.username, l.user_id, u.first_name, u.last_name
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.user_id
+                WHERE {where_clause}
+                ORDER BY l.username
+            """
+            
+            cursor.execute(query, params)
+            video_users = cursor.fetchall()
 
-        try:
-            if db_type == 'postgres':
-                cursor.execute(ordered_dates_query_postgres)
-            else:
-                cursor.execute(ordered_dates_query_sqlite)
-            video_date_rows = cursor.fetchall()
-            ordered_dates = [row[0] for row in video_date_rows if row[0]]
-        except Exception as e:
-            logger.error(f"Error fetching ordered_dates for video stats: {e}")
-            ordered_dates = [] # If error, video stats will be empty
-            stats_text += "Ошибка при загрузке дат для статистики видео.\n"
-
-
-        if ordered_dates:
-            stats_text += "<b>Статистика по видео (кто получил запись):</b>\n"
-            # Gather user actions by dates
-            user_date_actions = defaultdict(lambda: defaultdict(list))
-            try:
-                if db_type == 'postgres':
-                    cursor.execute("SELECT user_id, SUBSTRING(action_data FROM 'get_video_(.*)') as video_date FROM user_actions WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL")
+            stats_text += f"Запись занятия {date_str} получили: {len(video_users)}\n"
+            
+            # Добавляем список пользователей
+            for user_row in video_users: # Переименовано, чтобы избежать конфликта с update.effective_user
+                username, user_id_db, first_name, last_name = user_row # user_id_db для ясности
+                if username:
+                    user_display = "@" + username
+                elif first_name:
+                    user_display = first_name + (" " + last_name if last_name else "")
                 else:
-                    cursor.execute("SELECT user_id, SUBSTR(action_data, LENGTH('get_video_') + 1) as video_date FROM user_actions WHERE action_data LIKE 'get_video_%%' AND action_data IS NOT NULL")
-                
-                user_actions_rows = cursor.fetchall()
-                for u_id, video_date_str in user_actions_rows:
-                    if video_date_str: # Make sure video_date_str is not None
-                        user_date_actions[u_id][video_date_str].append('get_video')
-            except Exception as e:
-                logger.error(f"Error fetching user_actions for video_stats: {e}")
-                stats_text += "Ошибка при загрузке действий пользователей для статистики видео.\n"
-{{ ... }}
+                    user_display = f"ID: {user_id_db}" # Отображаем ID, если нет имени или юзернейма
+                stats_text += f"- {user_display}\n"
+            stats_text += "\n"
+
+        # Send statistics
+        update.message.reply_text(stats_text)
+        log_action(user_id, 'show_stats', 'admin_command')
+        
+        # Close database connection
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        error_message = "Ошибка при получении статистики: " + str(e)
+        update.message.reply_text(error_message)
+        print("Error in show_stats: " + str(e))
+        
+        # Закрываем соединение с базой данных в случае ошибки, если оно еще открыто
+        try:
+            if conn:
+                conn.close()
+        except:
+            pass
+
+def get_previous_video(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = user.id
+    username = user.username
+    
+    if not is_user_authorized(user_id, username):
+        update.message.reply_text(MSG_NOT_AUTHORIZED)
+        return
+    
+    conn = sqlite3.connect('filmschool.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT title, url, upload_date FROM videos ORDER BY upload_date DESC LIMIT 2")
+    videos = cursor.fetchall()
+    conn.close()
+    
+    if len(videos) >= 2:
+        title, url, date = videos[1]  # Second video is the previous one
+        update.message.reply_text(
+            f'*{title}*\n\n'
+            f'Дата загрузки: {date}\n\n'
+            f'Ссылка: {url}',
+            parse_mode=ParseMode.MARKDOWN
+        )
+        log_action(user_id, 'get_previous_video', 'database_access')
+    else:
+        update.message.reply_text('Предыдущее занятие пока не доступно. Пожалуйста, попробуйте позже.')
+
+# Message handler
+def handle_message(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = user.id
+    username = user.username
+    
+    # Разрешаем доступ к кнопкам как авторизованным пользователям, так и администраторам
+    if not (is_user_authorized(user_id, username) or is_admin(user_id)):
+        update.message.reply_text(MSG_NOT_AUTHORIZED)
+        return
+    
+    text = update.message.text
+    
+    # Загружаем актуальные настройки кнопок из базы данных
+    buttons_data = load_buttons()
+    
+    # Проверяем нажатие на кнопку 1 (последнее занятие)
+    if text == BUTTON_LATEST_LESSON:
+        # Используем индивидуальный текст сообщения для этой кнопки
+        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
+        update.message.reply_text(MSG_LATEST_LESSON)
+        # Извлекаем дату из текста кнопки
+        date_match = re.search(r'\d{1,2} \w+', BUTTON_LATEST_LESSON)
+        if date_match:
+            lesson_date = date_match.group(0)
+            # Логируем с указанием конкретной даты
+            log_action(user_id, f'get_video_{lesson_date}', BUTTON_LATEST_LESSON)
+        else:
+            # Если не удалось извлечь дату, используем стандартное логирование
+            log_action(user_id, 'get_latest_video', BUTTON_LATEST_LESSON)
+    # Проверяем нажатие на кнопку 2 (предыдущее занятие)
+    elif text == BUTTON_PREVIOUS_LESSON:
+        # Используем индивидуальный текст сообщения для этой кнопки
+        # Используем обычный текст без Markdown, чтобы ссылки отображались корректно
+        update.message.reply_text(MSG_PREVIOUS_LESSON)
+        # Извлекаем дату из текста кнопки
+        date_match = re.search(r'\d{1,2} \w+', BUTTON_PREVIOUS_LESSON)
+        if date_match:
+            lesson_date = date_match.group(0)
+            # Логируем с указанием конкретной даты
+            log_action(user_id, f'get_video_{lesson_date}', BUTTON_PREVIOUS_LESSON)
+        else:
+            # Если не удалось извлечь дату, используем стандартное логирование
+            log_action(user_id, 'get_previous_video', BUTTON_PREVIOUS_LESSON)
+    # Проверяем нажатие на кнопку "Обновить"
+    elif text == BUTTON_REFRESH:
+        # Если нажата кнопка "Обновить", вызываем функцию refresh_keyboard
+        refresh_keyboard(update, context)
+        log_action(user_id, 'refresh_keyboard_button', 'button_click')
+    else:
+        update.message.reply_text(
+            'Пожалуйста, используйте кнопки для доступа к записям занятий.'
+        )
+
+def list_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    conn = sqlite3.connect('filmschool.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT user_id, username, first_name, last_name, is_admin FROM users ORDER BY is_admin DESC, registration_date DESC")
+    users = cursor.fetchall()
+    conn.close()
+    
+    if not users:
+        update.message.reply_text('В системе нет зарегистрированных пользователей.')
+        return
+    
+    message = "*Список пользователей:*\n\n"
+    
+    for user in users:
+        user_id, username, first_name, last_name, is_admin = user
+        user_info = f"ID: `{user_id}`\n"
+        
+        if username:
+            user_info += f"Username: @{username}\n"
+        
+        name = ""
+        if first_name:
+            name += first_name
+        if last_name:
+            name += f" {last_name}"
+        
+        if name:
+            user_info += f"Имя: {name}\n"
+        
+        if is_admin:
+            user_info += "*Администратор*\n"
+        
+        message += f"{user_info}\n"
+    
+    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'list_users', 'admin_command')
+
+def pending_users(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    conn = sqlite3.connect('filmschool.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT user_id, username, first_name, last_name, request_date FROM pending_users ORDER BY request_date DESC")
+    users = cursor.fetchall()
+    conn.close()
+    
+    if not users:
+        update.message.reply_text('Нет пользователей, ожидающих регистрации.')
+        return
+    
+    message = "*Пользователи, запросившие доступ:*\n\n"
+    
+    for user in users:
+        user_id, username, first_name, last_name, request_date = user
+        user_info = f"ID: `{user_id}`\n"
+        
+        if username:
+            user_info += f"Username: @{username}\n"
+        
+        name = ""
+        if first_name:
+            name += first_name
+        if last_name:
+            name += f" {last_name}"
+        
+        if name:
+            user_info += f"Имя: {name}\n"
+        
+        user_info += f"Дата запроса: {request_date}\n"
+        user_info += f"Добавить: `/adduser {user_id}`\n"
+        
+        message += f"{user_info}\n"
+    
+    update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
+    log_action(user_id, 'pending_users', 'admin_command')
+
+def make_admin(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    # Проверяем, что команду выполняет администратор
+    if not is_admin(user_id):
+        update.message.reply_text('У вас нет прав для выполнения этой команды.')
+        return
+    
+    # Проверяем, что указан пользователь для повышения до администратора
+    if not context.args:
+        update.message.reply_text('Пожалуйста, укажите Telegram ID или @username пользователя, которого вы хотите сделать администратором.')
+        return
+    
+    user_identifier = context.args[0]
+    conn, db_type = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Определяем, является ли идентификатор числом (ID) или именем пользователя
+    if user_identifier.isdigit():
+        # Если это ID
+        target_user_id = int(user_identifier)
+        
+        # Проверяем, существует ли пользователь с таким ID
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("SELECT user_id, username, is_admin FROM users WHERE user_id = ?", (target_user_id,))
+            
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f'Пользователь с ID {target_user_id} не найден.')
+            conn.close()
+            return
+            
+        user_id, username, is_admin_flag = user_data
+        
+        # Проверяем, не является ли пользователь уже администратором
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
+            update.message.reply_text(f'Пользователь с ID {target_user_id} уже является администратором.')
+            conn.close()
+            return
+        
+        # Делаем пользователя администратором
+        if db_type == 'postgres':
+            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        conn.commit()
+        
+        username_str = f'@{username}' if username else ''
+        
+        # Создаем сообщение о назначении администратором
+        admin_message = f'''✅ Пользователь {username_str} (ID: {target_user_id}) успешно назначен администратором.
+
+ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
+        
+        update.message.reply_text(admin_message)
+        log_action(user_id, 'make_admin', f'target_user_id:{target_user_id}')
+        
+    elif user_identifier.startswith('@'):
+        # Если это @username
+        username = user_identifier[1:]  # Убираем символ @
+        
+        # Находим пользователя по имени
+        if db_type == 'postgres':
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = %s", (username,))
+        else:
+            cursor.execute("SELECT user_id, is_admin FROM users WHERE username = ?", (username,))
+            
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f'Пользователь @{username} не найден.')
+            conn.close()
+            return
+            
+        target_user_id, is_admin_flag = user_data
+        
+        # Проверяем, не является ли пользователь уже администратором
+        if db_type == 'postgres':
+            is_admin_value = is_admin_flag is True
+        else:
+            is_admin_value = is_admin_flag == 1
+            
+        if is_admin_value:
+            update.message.reply_text(f'Пользователь @{username} уже является администратором.')
+            conn.close()
+            return
+        
+        # Делаем пользователя администратором
+        if db_type == 'postgres':
+            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (target_user_id,))
+        else:
+            cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_user_id,))
+        conn.commit()
+        
+        # Создаем сообщение о назначении администратором
+        admin_message = f'''✅ Пользователь @{username} (ID: {target_user_id}) успешно назначен администратором.
+
+ℹ️ Для получения кнопок пользователь должен выполнить команду /start'''
+        
+        update.message.reply_text(admin_message)
+        log_action(user_id, 'make_admin', f'target_username:@{username}')
+        
+    else:
+        update.message.reply_text('Пожалуйста, укажите корректный Telegram ID или @username пользователя.')
+    
+    conn.close()
+
+def whois(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+    
+    # Проверяем, что передан параметр
+    if not context.args:
+        update.message.reply_text("Укажите ID или @username пользователя. Например: /whois 123456789 или /whois @username")
+        return
+    
+    user_identifier = context.args[0]
+    
+    try:
+        conn, db_type = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Определяем, это ID или username
+        if user_identifier.isdigit():
+            # Это ID
+            if db_type == 'postgres':
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = %s) as log_count
+                    FROM users WHERE user_id = %s
+                """, (user_identifier, user_identifier))
+            else:
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = ?) as log_count
+                    FROM users WHERE user_id = ?
+                """, (user_identifier, user_identifier))
+        elif user_identifier.startswith('@'):
+            # Это username
+            username = user_identifier[1:]  # Убираем @
+            if db_type == 'postgres':
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = %s
+                """, (username,))
+            else:
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = ?
+                """, (username,))
+        else:
+            # Попробуем найти по username без @
+            if db_type == 'postgres':
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = %s
+                """, (user_identifier,))
+            else:
+                cursor.execute("""
+                    SELECT user_id, username, first_name, last_name, registration_date, is_admin, 
+                    (SELECT COUNT(*) FROM logs WHERE user_id = users.user_id) as log_count
+                    FROM users WHERE username = ?
+                """, (user_identifier,))
+        
+        user_data = cursor.fetchone()
+        
+        if not user_data:
+            update.message.reply_text(f"Пользователь {user_identifier} не найден.")
+            conn.close()
+            return
+        
+        user_id, username, first_name, last_name, registration_date, is_admin, log_count = user_data
+        
+        # Получаем дополнительную информацию о действиях пользователя
+        # Последние 5 действий
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT action, action_data, timestamp 
+                FROM logs 
+                WHERE user_id = %s 
+                ORDER BY timestamp DESC 
+                LIMIT 5
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT action, action_data, timestamp 
+                FROM logs 
+                WHERE user_id = ? 
+                ORDER BY timestamp DESC 
+                LIMIT 5
+            """, (user_id,))
+        
+        recent_actions = cursor.fetchall()
+        
+        # Получаем статистику по записям занятий
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = %s AND action = 'get_latest_video'
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = ? AND action = 'get_latest_video'
+            """, (user_id,))
+        latest_video_count = cursor.fetchone()[0]
+        
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = %s AND action = 'get_previous_video'
+            """, (user_id,))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) FROM logs 
+                WHERE user_id = ? AND action = 'get_previous_video'
+            """, (user_id,))
+        previous_video_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        # Формируем сообщение с информацией о пользователе
+        message_text = f"Информация о пользователе:\n\n"
+        message_text += f"ID: {user_id}\n"
+        
+        if username:
+            message_text += f"Username: @{username}\n"
+        
+        if first_name or last_name:
+            full_name = (first_name or "") + (" " + last_name if last_name else "")
+            message_text += f"Имя: {full_name}\n"
+        
+        if registration_date:
+            message_text += f"Дата регистрации: {registration_date}\n"
+        
+        # Проверяем статус администратора
+        is_admin_text = "Да" if (is_admin == 1 or is_admin is True) else "Нет"
+        message_text += f"Администратор: {is_admin_text}\n"
+        
+        # Статистика активности
+        message_text += f"Всего действий: {log_count}\n"
+        message_text += f"Запросов записи 18 мая: {latest_video_count}\n"
+        message_text += f"Запросов записи 22 мая: {previous_video_count}\n\n"
+        
+        # Последние действия
+        if recent_actions:
+            message_text += "Последние действия:\n"
+            for action, action_data, timestamp in recent_actions:
+                message_text += f"- {timestamp}: {action}\n"
+        
+        update.message.reply_text(message_text)
+        log_action(user_id, 'whois', f'target:{user_identifier}')
+    except Exception as e:
+        error_message = f"Ошибка при получении информации о пользователе: {e}"
+        update.message.reply_text(error_message)
+        print(f"Error in whois: {e}")
+
+def show_user_lists(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        conn, db_type = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get list of administrators with all fields
+        if db_type == 'postgres':
+            cursor.execute("SELECT username, user_id, first_name, last_name FROM users WHERE is_admin = TRUE ORDER BY username")
+        else:
+            cursor.execute("SELECT username, user_id, first_name, last_name FROM users WHERE is_admin = 1 ORDER BY username")
+        admins_list = cursor.fetchall()
+        
+        # Get list of users who started the bot
+        if db_type == 'postgres':
+            cursor.execute("""
+                SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
+                FROM logs l 
+                JOIN users u ON l.user_id = u.user_id 
+                ORDER BY u.username NULLS LAST, u.first_name NULLS LAST, u.user_id
+            """)
+        else:
+            # SQLite не поддерживает NULLS LAST, используем более простой запрос
+            cursor.execute("""
+                SELECT DISTINCT u.username, u.user_id, u.first_name, u.last_name 
+                FROM logs l 
+                JOIN users u ON l.user_id = u.user_id 
+                ORDER BY u.username, u.first_name, u.user_id
+            """)
+        active_users = cursor.fetchall()
+        
+        conn.close()
+        
+        # Format the message
+        message_text = "Списки пользователей\n\n"
+        
+        # Add list of administrators
+        message_text += "Администраторы:\n"
+        
+        # Проверка на наличие администраторов
+        if not admins_list:
+            message_text += "- Администраторы не найдены\n"
+        else:
+            for admin in admins_list:
+                username, admin_id, first_name, last_name = admin
+                # Формируем отображаемое имя администратора, используя доступную информацию
+                if username and username != 'admin':
+                    admin_display = "@" + username
+                    # Добавляем имя пользователя, если оно есть
+                    if first_name:
+                        full_name = first_name + (" " + last_name if last_name else "")
+                        admin_display += f" ({full_name})"
+                elif first_name:
+                    admin_display = first_name + (" " + last_name if last_name else "") + f" (ID: {admin_id})"
+                else:
+                    admin_display = "ID: " + str(admin_id)
+                message_text += "- " + admin_display + "\n"
+        message_text += "\n"
+        
+        # Add list of active users
+        message_text += "Пользователи, запустившие бота:\n"
+        
+        # Проверка на наличие активных пользователей
+        if not active_users:
+            message_text += "- Активные пользователи не найдены\n"
+        else:
+            for user in active_users:
+                username, user_id, first_name, last_name = user
+                # Формируем отображаемое имя пользователя, используя доступную информацию
+                if username and username != 'admin':
+                    user_display = "@" + username
+                    # Добавляем имя пользователя, если оно есть
+                    if first_name:
+                        full_name = first_name + (" " + last_name if last_name else "")
+                        user_display += f" ({full_name})"
+                elif first_name:
+                    user_display = first_name + (" " + last_name if last_name else "") + f" (ID: {user_id})"
+                else:
+                    user_display = "ID: " + str(user_id)
+                message_text += "- " + user_display + "\n"
+        
+        # Send the message
+        update.message.reply_text(message_text)
+        log_action(user_id, 'show_user_lists', 'admin_command')
+    except Exception as e:
+        error_message = "Ошибка при получении списков пользователей: " + str(e)
+        update.message.reply_text(error_message)
+        print("Error in show_user_lists: " + str(e))
+
+# Глобальная переменная для хранения экземпляра Updater
+global_updater = None
+
+# Функция для корректного завершения работы бота
+def shutdown_bot(signal_number=None, frame=None):
+    print("Получен сигнал завершения. Корректно завершаем работу бота...")
+    global global_updater
+    
+    # Удаляем файл блокировки
+    remove_lock_file()
+    
+    if global_updater:
+        print("Останавливаем бота...")
+        global_updater.stop()
+        print("Бот остановлен.")
+    sys.exit(0)
+
+# Путь к файлу блокировки
+LOCK_FILE = '/tmp/tombot_lock'
+
+# Функция для проверки и создания файла блокировки
+def check_lock_file():
+    # Проверяем, существует ли файл блокировки
+    if os.path.exists(LOCK_FILE):
+        try:
+            # Проверяем время создания файла
+            file_time = os.path.getmtime(LOCK_FILE)
+            current_time = time.time()
+            
+            # Если файл старше 1 часа, удаляем его (считаем, что предыдущий процесс завис)
+            if current_time - file_time > 3600:  # 3600 секунд = 1 час
+                os.remove(LOCK_FILE)
+                logger.warning(f'Удален устаревший файл блокировки ({current_time - file_time:.1f} сек. назад)')
+            else:
+                # Если файл свежий, значит другой экземпляр бота уже запущен
+                logger.error(f'Обнаружен файл блокировки ({current_time - file_time:.1f} сек. назад). Возможно, другой экземпляр бота уже запущен.')
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f'Ошибка при проверке файла блокировки: {e}')
+            # Удаляем файл блокировки в случае ошибки
+            try:
+                os.remove(LOCK_FILE)
+            except:
+                pass
+    
+    # Создаем новый файл блокировки
+    try:
+        with open(LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        logger.info(f'Создан файл блокировки: {LOCK_FILE}')
+    except Exception as e:
+        logger.error(f'Ошибка при создании файла блокировки: {e}')
+
+# Функция для удаления файла блокировки при завершении работы бота
+def remove_lock_file():
+    try:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+            logger.info(f'Файл блокировки удален: {LOCK_FILE}')
+    except Exception as e:
+        logger.error(f'Ошибка при удалении файла блокировки: {e}')
+
+def main() -> None:
+    global global_updater
+    
+    # Проверяем и создаем файл блокировки
+    check_lock_file()
+    
+    # Регистрируем обработчики сигналов для корректного завершения работы
+    signal.signal(signal.SIGINT, shutdown_bot)  # Ctrl+C
+    signal.signal(signal.SIGTERM, shutdown_bot)  # Сигнал завершения от системы
+    
+    # Initialize database with all required tables
+    try:
+        init_database()
+        print("База данных успешно инициализирована")
+    except Exception as e:
+        print(f"Ошибка при инициализации базы данных: {e}")
+    
+    # Setup database
+    setup_database()
+    
+    # Load button settings from database
+    load_buttons_from_db()
+    
+    # Get token from environment variable
+    token = os.environ.get('TELEGRAM_TOKEN')
+    if not token:
+        logger.error("No token provided. Set the TELEGRAM_TOKEN environment variable.")
+        return
+    
+    # Create the Updater with increased timeout and retry settings
+    updater = Updater(token, request_kwargs={'read_timeout': 30, 'connect_timeout': 30}, use_context=True)
+    global_updater = updater
+    
+    # Get the dispatcher to register handlers
+    dispatcher = updater.dispatcher
+    
+    # Register command handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("refresh", refresh_keyboard))
+    dispatcher.add_handler(CommandHandler("adduser", add_user))
+    dispatcher.add_handler(CommandHandler("addusers", add_users))
+    dispatcher.add_handler(CommandHandler("removeuser", remove_user))
+    dispatcher.add_handler(CommandHandler("updatevideo", update_video))
+    dispatcher.add_handler(CommandHandler("stats", show_stats))
+    dispatcher.add_handler(CommandHandler("actions", show_actions))
+    dispatcher.add_handler(CommandHandler("listusers", list_users))
+    dispatcher.add_handler(CommandHandler("users", list_users))
+    dispatcher.add_handler(CommandHandler("checkusers", check_users))
+    dispatcher.add_handler(CommandHandler("diagnosedb", diagnose_db))
+    dispatcher.add_handler(CommandHandler("initdb", init_db_command))
+    dispatcher.add_handler(CommandHandler("pendingusers", pending_users))
+    dispatcher.add_handler(CommandHandler("makeadmin", make_admin))
+    dispatcher.add_handler(CommandHandler("userlists", show_user_lists))
+    dispatcher.add_handler(CommandHandler("whois", whois))
+    
+    # Register button update command handlers
+    dispatcher.add_handler(CommandHandler("button1", update_button))
+    dispatcher.add_handler(CommandHandler("button2", update_button))
+    
+    # Register message handler
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    
+    # Добавляем обработчик ошибок для обработки конфликтов
+    def error_handler(update, context):
+        error = context.error
+        logger.error(f'Ошибка при обработке обновления: {error}')
+        
+        # Проверяем, является ли ошибка конфликтом
+        if 'Conflict' in str(error):
+            logger.warning('Обнаружен конфликт с другим экземпляром бота. Завершаем работу...')
+            shutdown_bot()
+    
+    # Регистрируем обработчик ошибок
+    dispatcher.add_error_handler(error_handler)
+    
+    # Start the Bot with error handling
+    try:
+        # Увеличиваем время между повторными попытками при ошибках и очищаем очередь обновлений
+        updater.start_polling(poll_interval=1.0, timeout=30, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        
+        # Log that the bot has started
+        logger.info('Bot started')
+        
+        # Run the bot until you press Ctrl-C or the process receives SIGINT,
+        # SIGTERM or SIGABRT. This should be used most of the time, since
+        # start_polling() is non-blocking and will stop the bot gracefully.
+        updater.idle()
+    except Exception as e:
+        logger.error(f'Ошибка при запуске бота: {e}')
+        # Если произошла ошибка конфликта, попробуем корректно завершить работу
+        if 'Conflict' in str(e):
+            logger.warning('Обнаружен конфликт с другим экземпляром бота. Завершаем работу...')
+            shutdown_bot()
+        else:
+            # Для других ошибок просто логируем и завершаем
+            logger.error(f'Неожиданная ошибка: {e}')
+            shutdown_bot()
+
+if __name__ == '__main__':
+    main()

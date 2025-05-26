@@ -1342,7 +1342,10 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         active_users = cursor.fetchone()[0]
 
         # Получаем количество администраторов
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+        if db_type == 'postgres':
+            cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = TRUE")
+        else:
+            cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
         admin_count = cursor.fetchone()[0]
 
         # Получаем количество неактивных пользователей
@@ -1356,7 +1359,10 @@ def show_stats(update: Update, context: CallbackContext) -> None:
         stats_text += f"Добавлено, но не запустили бота: {inactive_users}\n\n"
 
         # Получаем список администраторов
-        cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
+        if db_type == 'postgres':
+            cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = TRUE")
+        else:
+            cursor.execute("SELECT username, first_name, last_name FROM users WHERE is_admin = 1")
         admins = cursor.fetchall()
 
         # Добавляем список администраторов

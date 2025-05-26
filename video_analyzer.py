@@ -96,7 +96,7 @@ class VideoDownloadsAnalyzer:
         try:
             # Для каждой даты получаем список пользователей
             for date in self.known_dates:
-                # Формируем условия для запроса
+                # Формируем условия для WHERE clause
                 conditions = []
                 params = []
                 
@@ -112,7 +112,7 @@ class VideoDownloadsAnalyzer:
                     placeholders = ', '.join(['%s' if self.db_type == 'postgresql' else '?'] * len(specific_actions))
                     conditions.append(f"l.action IN ({placeholders})")
                     params.extend(specific_actions)
-                
+                    
                 where_clause = " OR ".join(f"({c})" for c in conditions)
                 
                 query = f"""

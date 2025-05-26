@@ -1368,16 +1368,17 @@ def show_stats(update: Update, context: CallbackContext) -> None:
 
     try:
         # Подключаемся к базе данных
-        conn = get_db_connection()
+        result = get_db_connection()
+        
+        # Функция get_db_connection возвращает кортеж (conn, db_type)
+        if isinstance(result, tuple) and len(result) == 2:
+            conn, db_type = result
+        else:
+            # Если функция вернула неожиданный результат
+            update.message.reply_text("Ошибка при подключении к базе данных: неверный формат соединения")
+            return
+        
         cursor = conn.cursor()
-
-        # Определяем тип базы данных
-        db_type = 'sqlite'
-        try:
-            cursor.execute("SELECT version()")
-            db_type = 'postgres'
-        except:
-            pass
 
         # Получаем общее количество пользователей
         cursor.execute("SELECT COUNT(*) FROM users")
